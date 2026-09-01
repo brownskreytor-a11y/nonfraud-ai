@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NonFraud-AI | Transaction Intake</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ink: #141B2E;
+            --paper: #EEF1F4;
+            --surface: #FFFFFF;
+            --navy: #1F3358;
+            --brass: #A9722E;
+            --brass-dark: #8C5E24;
+            --safe: #2E6A4E;
+            --danger: #8C2F2F;
+            --muted: #5B6472;
+            --hairline: #D8DCE2;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+            background: var(--paper);
+            color: var(--ink);
+            margin: 0;
+            padding: 56px 24px 80px;
+            line-height: 1.5;
+        }
+
+        .sheet { max-width: 860px; margin: 0 auto; }
+
+        .masthead {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            border-bottom: 2px solid var(--ink);
+            padding-bottom: 18px;
+            margin-bottom: 8px;
+        }
+        .wordmark {
+            font-family: 'Source Serif 4', serif;
+            font-weight: 600;
+            font-size: 26px;
+            letter-spacing: -0.01em;
+        }
+        .wordmark span { color: var(--brass); }
+        .masthead .tag-label {
+            font-size: 13px;
+            color: var(--muted);
+            font-family: 'IBM Plex Mono', monospace;
+        }
+
+        h1.section-title {
+            font-family: 'Source Serif 4', serif;
+            font-weight: 600;
+            font-size: 22px;
+            margin: 40px 0 4px;
+        }
+        p.section-note { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+
+        form.intake {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 22px 28px;
+            background: var(--surface);
+            border: 1px solid var(--hairline);
+            border-radius: 4px;
+            padding: 32px;
+        }
+        .field { display: flex; flex-direction: column; position: relative; }
+        .field.full { grid-column: span 2; }
+
+        label { font-size: 12.5px; font-weight: 500; color: var(--muted); margin-bottom: 7px; }
+        input, select {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 14.5px;
+            padding: 10px 2px;
+            border: none;
+            border-bottom: 1.5px solid var(--hairline);
+            background: transparent;
+            color: var(--ink);
+            border-radius: 0;
+        }
+        select { font-family: 'IBM Plex Sans', sans-serif; }
+        input:focus, select:focus { outline: none; border-bottom-color: var(--navy); }
+        input.error-input { border-bottom-color: var(--danger); }
+        .error-msg { font-size: 11.5px; color: var(--danger); margin-top: 5px; display: none; }
+
+        button.submit-btn {
+            grid-column: span 2;
+            background: var(--brass);
+            color: white;
+            border: none;
+            padding: 14px;
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-weight: 500;
+            font-size: 15px;
+            cursor: pointer;
+            border-radius: 3px;
+            margin-top: 6px;
+            transition: background 0.15s;
+        }
+        button.submit-btn:hover { background: var(--brass-dark); }
+
+        table.register { width: 100%; border-collapse: collapse; margin-top: 4px; }
+        table.register th {
+            text-align: left;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: var(--muted);
+            padding: 10px 14px;
+            border-bottom: 1.5px solid var(--ink);
+        }
+        table.register td { padding: 12px 14px; border-bottom: 1px solid var(--hairline); font-size: 14px; }
+        table.register td.num, table.register td.mono { font-family: 'IBM Plex Mono', monospace; }
+        table.register tr:hover td { background: #F7F8FA; }
+
+        .tag { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 8px; border-radius: 3px; background: #E7ECF2; color: var(--navy); }
+        .empty-row td { text-align: center; color: var(--muted); padding: 36px 0; }
+    </style>
+</head>
+<body>
+    <div class="sheet">
+        <div class="masthead">
+            <div class="wordmark">Non<span>Fraud</span>-AI</div>
+            <div class="tag-label">Transaction Intake</div>
+        </div>
+
+        <h1 class="section-title">New Transaction</h1>
+        <p class="section-note">Enter the transaction details below to run it through the fraud screening engine.</p>
+
+        <form action="/predict" method="POST" id="payment-form" class="intake">
+            <input type="hidden" id="client_time" name="client_time">
+            <input type="hidden" id="latitude" name="latitude" value="5.6037">
+            <input type="hidden" id="longitude" name="longitude" value="-0.1870">
+
+            <div class="field">
+                <label for="card_number">Card Number</label>
+                <input type="text" id="card_number" name="card_number" placeholder="4532 0154 9821 4012" maxlength="19" required>
+                <span id="card-error" class="error-msg"></span>
+            </div>
+
+            <div class="field">
+                <label for="issuer_name">Card Issuer / Bank Location</label>
+                <select id="issuer_name" name="issuer_name" required>
+                    {% for issuer in issuers %}
+                        <option value="{{ issuer }}">{{ issuer }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="field">
+                <label for="expiry">Expiry Date</label>
+                <input type="text" id="expiry" name="expiry" placeholder="MM/YY" maxlength="5" required>
+                <span id="expiry-error" class="error-msg"></span>
+            </div>
+
+            <div class="field">
+                <label for="cvv">CVV</label>
+                <input type="password" id="cvv" name="cvv" placeholder="•••" maxlength="4" required>
+            </div>
+
+            <div class="field full">
+                <label for="amount">Transaction Amount ($)</label>
+                <input type="number" step="0.01" id="amount" name="amount" placeholder="150.00" required>
+                <span id="amount-error" class="error-msg"></span>
+            </div>
+
+            <button type="submit" class="submit-btn">Run Fraud Check</button>
+        </form>
+
+        <h1 class="section-title">Transaction Register</h1>
+        <p class="section-note">A running record of transactions submitted in this session.</p>
+
+        <table class="register">
+            <thead>
+                <tr>
+                    <th>Card</th>
+                    <th>Issuer</th>
+                    <th>Amount</th>
+                    <th>Device Time</th>
+                    <th>Velocity</th>
+                    <th>Proximity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td class="mono">{{ log[1] }}</td>
+                    <td><span class="tag">{{ log[2] }}</span></td>
+                    <td class="num">${{ "%.2f"|format(log[3]) }}</td>
+                    <td class="mono" style="color: var(--muted);">{{ log[4] }}</td>
+                    <td class="mono">{{ log[5] }}x</td>
+                    <td class="mono" style="color: var(--muted);">{{ log[7] }} km</td>
+                </tr>
+                {% else %}
+                <tr class="empty-row"><td colspan="6">No transactions logged yet. Submit one above to get started.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const cardInput = document.getElementById('card_number');
+        const cardError = document.getElementById('card-error');
+
+        cardInput.addEventListener('input', (e) => {
+            let value = e.target.value.replace(/\D/g, '');
+            let formattedValue = '';
+            for (let i = 0; i < value.length; i++) {
+                if (i > 0 && i % 4 === 0) formattedValue += ' ';
+                formattedValue += value[i];
+            }
+            e.target.value = formattedValue;
+            cardInput.classList.remove('error-input');
+            cardError.style.display = 'none';
+        });
+
+        cardInput.addEventListener('blur', () => {
+            let rawCardVal = cardInput.value.replace(/\s+/g, '');
+            if (rawCardVal.length > 0 && (rawCardVal.length < 15 || rawCardVal.length > 19)) {
+                cardInput.classList.add('error-input');
+                cardError.textContent = 'Incomplete card number. Must be 15 to 19 digits.';
+                cardError.style.display = 'block';
+            }
+        });
+
+        const expiryInput = document.getElementById('expiry');
+        const expiryError = document.getElementById('expiry-error');
+
+        expiryInput.addEventListener('input', (e) => {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.length > 4) value = value.slice(0, 4);
+            e.target.value = value.length >= 3 ? value.slice(0, 2) + '/' + value.slice(2) : value;
+            expiryInput.classList.remove('error-input');
+            expiryError.style.display = 'none';
+        });
+
+        expiryInput.addEventListener('blur', () => {
+            let expiryValue = expiryInput.value.trim();
+            if (expiryValue.length === 0) return;
+            let parts = expiryValue.split('/');
+            if (parts.length !== 2 || parts[0].length !== 2 || parts[1].length !== 2) {
+                showExpiryError('Please enter format MM/YY.');
+                return;
+            }
+            let month = parseInt(parts[0], 10);
+            let year = parseInt('20' + parts[1], 10);
+            if (month < 1 || month > 12) { showExpiryError('Invalid month'); return; }
+            let now = new Date();
+            if (year < now.getFullYear() || (year === now.getFullYear() && month < now.getMonth() + 1)) {
+                showExpiryError('Card expired');
+            }
+        });
+
+        function showExpiryError(message) {
+            expiryInput.classList.add('error-input');
+            expiryError.textContent = message;
+            expiryError.style.display = 'block';
+        }
+
+        document.getElementById('payment-form').addEventListener('submit', (e) => {
+            let rawCardVal = cardInput.value.replace(/\s+/g, '');
+            if (rawCardVal.length < 15 || rawCardVal.length > 19) {
+                cardInput.classList.add('error-input');
+                cardError.textContent = 'Incomplete card number. Must be 15 to 19 digits.';
+                cardError.style.display = 'block';
+                cardInput.focus();
+                e.preventDefault();
+            }
+        });
+
+        document.getElementById('client_time').value = new Date().toISOString();
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition((pos) => {
+                document.getElementById('latitude').value = pos.coords.latitude.toFixed(4);
+                document.getElementById('longitude').value = pos.coords.longitude.toFixed(4);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NonFraud-AI | Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ink: #141B2E;
+            --paper: #EEF1F4;
+            --surface: #FFFFFF;
+            --navy: #1F3358;
+            --brass: #A9722E;
+            --brass-dark: #8C5E24;
+            --safe: #2E6A4E;
+            --danger: #8C2F2F;
+            --muted: #5B6472;
+            --hairline: #D8DCE2;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+            background: var(--paper);
+            color: var(--ink);
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        .topbar {
+            background: var(--ink);
+            color: white;
+            padding: 18px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .topbar .wordmark { font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 19px; }
+        .topbar .wordmark span { color: #D4A55C; }
+        .topbar .role-tag { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9AA3B5; margin-left: 10px; }
+        .topbar a {
+            color: #C9CFDB;
+            text-decoration: none;
+            font-size: 13.5px;
+            border: 1px solid #3A445C;
+            padding: 7px 14px;
+            border-radius: 3px;
+        }
+        .topbar a:hover { color: white; border-color: #5A6683; }
+
+        .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+
+        .metric-strip {
+            display: flex;
+            border: 1px solid var(--hairline);
+            background: var(--surface);
+            border-radius: 4px;
+            margin-bottom: 44px;
+        }
+        .metric {
+            flex: 1;
+            padding: 22px 26px;
+            border-right: 1px solid var(--hairline);
+        }
+        .metric:last-child { border-right: none; }
+        .metric .label { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+        .metric .value { font-family: 'IBM Plex Mono', monospace; font-size: 30px; font-weight: 500; }
+        .metric .value.danger { color: var(--danger); }
+        .metric .value.brass { color: var(--brass); }
+
+        h2.section-title {
+            font-family: 'Source Serif 4', serif;
+            font-weight: 600;
+            font-size: 20px;
+            margin: 0 0 4px;
+        }
+        .section-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 16px;
+        }
+        p.section-note { color: var(--muted); font-size: 13.5px; margin: 0; }
+
+        .text-action {
+            font-size: 13px;
+            color: var(--danger);
+            text-decoration: none;
+            font-family: 'IBM Plex Mono', monospace;
+            border-bottom: 1px dotted var(--danger);
+        }
+        .text-action:hover { color: #6b2222; }
+
+        section { margin-bottom: 48px; }
+
+        form.flag-form {
+            display: grid;
+            grid-template-columns: 160px 1fr 1fr 100px;
+            gap: 16px;
+            background: var(--surface);
+            border: 1px solid var(--hairline);
+            border-radius: 4px;
+            padding: 22px;
+        }
+        form.flag-form select, form.flag-form input {
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-size: 13.5px;
+            padding: 9px 10px;
+            border: 1px solid var(--hairline);
+            border-radius: 3px;
+            background: var(--paper);
+        }
+        form.flag-form button {
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 3px;
+            font-size: 13.5px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        form.flag-form button:hover { background: #6b2222; }
+
+        table.ledger { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); border-radius: 4px; overflow: hidden; }
+        table.ledger th {
+            text-align: left;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: var(--muted);
+            padding: 12px 16px;
+            border-bottom: 1.5px solid var(--ink);
+            background: #F7F8FA;
+        }
+        table.ledger td { padding: 12px 16px; border-bottom: 1px solid var(--hairline); font-size: 13.5px; vertical-align: middle; }
+        table.ledger tr:last-child td { border-bottom: none; }
+        table.ledger td.mono { font-family: 'IBM Plex Mono', monospace; }
+        table.ledger tr:hover td { background: #FAFBFC; }
+
+        .risk-tag {
+            display: inline-block;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 12px;
+            font-weight: 500;
+            color: white;
+            padding: 3px 9px;
+            border-radius: 3px;
+        }
+        .status-tag {
+            display: inline-block;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 3px 9px;
+            border-radius: 3px;
+        }
+        .status-approved { background: #E3EEE8; color: var(--safe); }
+        .status-flagged { background: #F6E9E9; color: var(--danger); }
+        .status-reported { background: #E7E8EB; color: var(--ink); }
+
+        .row-actions { display: flex; gap: 6px; }
+        .btn-mini {
+            border: 1px solid var(--hairline);
+            background: var(--surface);
+            padding: 5px 10px;
+            font-size: 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-family: 'IBM Plex Sans', sans-serif;
+        }
+        .btn-mini.danger { color: var(--danger); border-color: #E3C7C7; }
+        .btn-mini.safe { color: var(--safe); border-color: #C8DED2; }
+        .btn-mini:hover { background: #F7F8FA; }
+
+        .empty-row td { text-align: center; color: var(--muted); padding: 30px 0; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div><span class="wordmark">Non<span>Fraud</span>-AI</span><span class="role-tag">ADMIN CONSOLE</span></div>
+        <a href="{{ url_for('index') }}">Return to Simulation Form</a>
+    </div>
+
+    <div class="wrap">
+        <div class="metric-strip">
+            <div class="metric">
+                <div class="label">Total Transactions</div>
+                <div class="value">{{ total_txns }}</div>
+            </div>
+            <div class="metric">
+                <div class="label">Confirmed Fraud Reports</div>
+                <div class="value danger">{{ fraud_reports }}</div>
+            </div>
+            <div class="metric">
+                <div class="label">Blacklisted Entities</div>
+                <div class="value brass">{{ total_flagged }}</div>
+            </div>
+        </div>
+
+        <section>
+            <div class="section-head">
+                <h2 class="section-title">Flag a Payment Method or Device</h2>
+            </div>
+            <form action="{{ url_for('flag_entity') }}" method="POST" class="flag-form">
+                <select name="entity_type">
+                    <option value="Card">Card</option>
+                    <option value="Device">Device Fingerprint</option>
+                </select>
+                <input type="text" name="entity_value" placeholder="Card or Device ID" required>
+                <input type="text" name="reason" placeholder="Reason (e.g. stolen card chargeback)" required>
+                <button type="submit">Flag</button>
+            </form>
+        </section>
+
+        <section>
+            <div class="section-head">
+                <h2 class="section-title">Active Blacklist</h2>
+            </div>
+            <table class="ledger">
+                <thead>
+                    <tr><th>Type</th><th>Value</th><th>Reason</th><th>Flagged</th><th></th></tr>
+                </thead>
+                <tbody>
+                    {% for item in flagged_list %}
+                    <tr>
+                        <td>{{ item[1] }}</td>
+                        <td class="mono">{{ item[2] }}</td>
+                        <td>{{ item[3] }}</td>
+                        <td class="mono" style="color: var(--muted);">{{ item[4] }}</td>
+                        <td>
+                            <form action="{{ url_for('unflag_entity_by_value') }}" method="POST">
+                                <input type="hidden" name="entity_value" value="{{ item[2] }}">
+                                <button type="submit" class="btn-mini safe">Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr class="empty-row"><td colspan="5">No blacklisted entities.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+
+        <section>
+            <div class="section-head">
+                <div>
+                    <h2 class="section-title">Transaction Triage</h2>
+                    <p class="section-note">Most recent 50 transactions, sorted by risk relevance.</p>
+                </div>
+                <a href="{{ url_for('clear_history') }}" class="text-action" onclick="return confirm('Clear all transaction logs? This cannot be undone.');">Clear History</a>
+            </div>
+            <table class="ledger">
+                <thead>
+                    <tr>
+                        <th>ID</th><th>Card</th><th>Issuer</th><th>Amount</th><th>Time</th>
+                        <th>Risk</th><th>Status</th><th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for txn in transactions %}
+                    <tr>
+                        <td class="mono" style="color: var(--muted);">#{{ txn[0] }}</td>
+                        <td class="mono">{{ txn[1] }}</td>
+                        <td style="color: var(--muted);">{{ txn[2] }}</td>
+                        <td class="mono">${{ "%.2f"|format(txn[3]) }}</td>
+                        <td class="mono" style="color: var(--muted); font-size: 12.5px;">{{ txn[4] }}</td>
+                        <td>
+                            {% set clean_num = txn[6].split('%')[0].strip() %}
+                            {% set risk_val = clean_num | float if clean_num | length > 0 else 0.0 %}
+                            {% set r = (46 + (140-46) * risk_val / 100) | int %}
+                            {% set g = (106 - 59 * risk_val / 100) | int %}
+                            {% set b = (78 - 31 * risk_val / 100) | int %}
+                            <span class="risk-tag" style="background-color: rgb({{ r }},{{ g }},{{ b }});">{{ txn[6] }}</span>
+                        </td>
+                        <td>
+                            {% if txn[7] == 'Flagged' %}
+                                <span class="status-tag status-flagged">{{ txn[7] }}</span>
+                            {% elif txn[7] == 'Fraud Reported' %}
+                                <span class="status-tag status-reported">{{ txn[7] }}</span>
+                            {% else %}
+                                <span class="status-tag status-approved">{{ txn[7] }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="row-actions">
+                                {% if txn[1] in blacklisted_cards %}
+                                <form action="{{ url_for('unflag_entity_by_value') }}" method="POST">
+                                    <input type="hidden" name="entity_value" value="{{ txn[1] }}">
+                                    <button type="submit" class="btn-mini safe">Unflag</button>
+                                </form>
+                                {% else %}
+                                <form action="{{ url_for('flag_entity_quick') }}" method="POST">
+                                    <input type="hidden" name="card_masked" value="{{ txn[1] }}">
+                                    <button type="submit" class="btn-mini danger">Flag</button>
+                                </form>
+                                {% endif %}
+                                {% if txn[7] != 'Fraud Reported' %}
+                                <form action="{{ url_for('report_fraud', txn_id=txn[0]) }}" method="POST">
+                                    <button type="submit" class="btn-mini">Report</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr class="empty-row"><td colspan="8">No transactions found.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </div>
+</body>
+</html>
