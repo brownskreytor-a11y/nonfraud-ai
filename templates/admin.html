@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NonFraud-AI | Admin</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -32,8 +33,10 @@
             color: white;
             padding: 18px 32px;
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
         }
         .topbar .wordmark { font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 19px; }
         .topbar .wordmark span { color: #D4A55C; }
@@ -156,6 +159,17 @@
         .status-flagged { background: #F6E9E9; color: var(--danger); }
         .status-reported { background: #E7E8EB; color: var(--ink); }
 
+        .table-scroll { overflow-x: auto; border-radius: 4px; }
+
+        @media (max-width: 760px) {
+            .wrap { padding: 24px 16px 60px; }
+            .metric-strip { flex-direction: column; }
+            .metric { border-right: none; border-bottom: 1px solid var(--hairline); }
+            .metric:last-child { border-bottom: none; }
+            form.flag-form { grid-template-columns: 1fr; }
+            .section-head { flex-direction: column; align-items: flex-start; gap: 8px; }
+        }
+
         .row-actions { display: flex; gap: 6px; }
         .btn-mini {
             border: 1px solid var(--hairline);
@@ -176,7 +190,7 @@
 <body>
     <div class="topbar">
         <div><span class="wordmark">Non<span>Fraud</span>-AI</span><span class="role-tag">ADMIN CONSOLE</span></div>
-        <a href="{{ url_for('index') }}">Return to Simulation Form</a>
+        <a href="{{ url_for('transaction_intake') }}">Return to Simulation Form</a>
     </div>
 
     <div class="wrap">
@@ -214,29 +228,31 @@
             <div class="section-head">
                 <h2 class="section-title">Active Blacklist</h2>
             </div>
-            <table class="ledger">
-                <thead>
-                    <tr><th>Type</th><th>Value</th><th>Reason</th><th>Flagged</th><th></th></tr>
-                </thead>
-                <tbody>
-                    {% for item in flagged_list %}
-                    <tr>
-                        <td>{{ item[1] }}</td>
-                        <td class="mono">{{ item[2] }}</td>
-                        <td>{{ item[3] }}</td>
-                        <td class="mono" style="color: var(--muted);">{{ item[4] }}</td>
-                        <td>
-                            <form action="{{ url_for('unflag_entity_by_value') }}" method="POST">
-                                <input type="hidden" name="entity_value" value="{{ item[2] }}">
-                                <button type="submit" class="btn-mini safe">Remove</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr class="empty-row"><td colspan="5">No blacklisted entities.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div class="table-scroll">
+                <table class="ledger">
+                    <thead>
+                        <tr><th>Type</th><th>Value</th><th>Reason</th><th>Flagged</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for item in flagged_list %}
+                        <tr>
+                            <td>{{ item[1] }}</td>
+                            <td class="mono">{{ item[2] }}</td>
+                            <td>{{ item[3] }}</td>
+                            <td class="mono" style="color: var(--muted);">{{ item[4] }}</td>
+                            <td>
+                                <form action="{{ url_for('unflag_entity_by_value') }}" method="POST">
+                                    <input type="hidden" name="entity_value" value="{{ item[2] }}">
+                                    <button type="submit" class="btn-mini safe">Remove</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr class="empty-row"><td colspan="5">No blacklisted entities.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </section>
 
         <section>
@@ -247,64 +263,66 @@
                 </div>
                 <a href="{{ url_for('clear_history') }}" class="text-action" onclick="return confirm('Clear all transaction logs? This cannot be undone.');">Clear History</a>
             </div>
-            <table class="ledger">
-                <thead>
-                    <tr>
-                        <th>ID</th><th>Card</th><th>Issuer</th><th>Amount</th><th>Time</th>
-                        <th>Risk</th><th>Status</th><th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for txn in transactions %}
-                    <tr>
-                        <td class="mono" style="color: var(--muted);">#{{ txn[0] }}</td>
-                        <td class="mono">{{ txn[1] }}</td>
-                        <td style="color: var(--muted);">{{ txn[2] }}</td>
-                        <td class="mono">${{ "%.2f"|format(txn[3]) }}</td>
-                        <td class="mono" style="color: var(--muted); font-size: 12.5px;">{{ txn[4] }}</td>
-                        <td>
-                            {% set clean_num = txn[6].split('%')[0].strip() %}
-                            {% set risk_val = clean_num | float if clean_num | length > 0 else 0.0 %}
-                            {% set r = (46 + (140-46) * risk_val / 100) | int %}
-                            {% set g = (106 - 59 * risk_val / 100) | int %}
-                            {% set b = (78 - 31 * risk_val / 100) | int %}
-                            <span class="risk-tag" style="background-color: rgb({{ r }},{{ g }},{{ b }});">{{ txn[6] }}</span>
-                        </td>
-                        <td>
-                            {% if txn[7] == 'Flagged' %}
-                                <span class="status-tag status-flagged">{{ txn[7] }}</span>
-                            {% elif txn[7] == 'Fraud Reported' %}
-                                <span class="status-tag status-reported">{{ txn[7] }}</span>
-                            {% else %}
-                                <span class="status-tag status-approved">{{ txn[7] }}</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <div class="row-actions">
-                                {% if txn[1] in blacklisted_cards %}
-                                <form action="{{ url_for('unflag_entity_by_value') }}" method="POST">
-                                    <input type="hidden" name="entity_value" value="{{ txn[1] }}">
-                                    <button type="submit" class="btn-mini safe">Unflag</button>
-                                </form>
+            <div class="table-scroll">
+                <table class="ledger">
+                    <thead>
+                        <tr>
+                            <th>ID</th><th>Card</th><th>Issuer</th><th>Amount</th><th>Time</th>
+                            <th>Risk</th><th>Status</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for txn in transactions %}
+                        <tr>
+                            <td class="mono" style="color: var(--muted);">#{{ txn[0] }}</td>
+                            <td class="mono">{{ txn[1] }}</td>
+                            <td style="color: var(--muted);">{{ txn[2] }}</td>
+                            <td class="mono">${{ "%.2f"|format(txn[3]) }}</td>
+                            <td class="mono" style="color: var(--muted); font-size: 12.5px;">{{ txn[4] }}</td>
+                            <td>
+                                {% set clean_num = txn[6].split('%')[0].strip() %}
+                                {% set risk_val = clean_num | float if clean_num | length > 0 else 0.0 %}
+                                {% set r = (46 + (140-46) * risk_val / 100) | int %}
+                                {% set g = (106 - 59 * risk_val / 100) | int %}
+                                {% set b = (78 - 31 * risk_val / 100) | int %}
+                                <span class="risk-tag" style="background-color: rgb({{ r }},{{ g }},{{ b }});">{{ txn[6] }}</span>
+                            </td>
+                            <td>
+                                {% if txn[7] == 'Flagged' %}
+                                    <span class="status-tag status-flagged">{{ txn[7] }}</span>
+                                {% elif txn[7] == 'Fraud Reported' %}
+                                    <span class="status-tag status-reported">{{ txn[7] }}</span>
                                 {% else %}
-                                <form action="{{ url_for('flag_entity_quick') }}" method="POST">
-                                    <input type="hidden" name="card_masked" value="{{ txn[1] }}">
-                                    <button type="submit" class="btn-mini danger">Flag</button>
-                                </form>
+                                    <span class="status-tag status-approved">{{ txn[7] }}</span>
                                 {% endif %}
-                                {% if txn[7] != 'Fraud Reported' %}
-                                <form action="{{ url_for('report_fraud', txn_id=txn[0]) }}" method="POST">
-                                    <button type="submit" class="btn-mini">Report</button>
-                                </form>
-                                {% endif %}
-                            </div>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr class="empty-row"><td colspan="8">No transactions found.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+                            </td>
+                            <td>
+                                <div class="row-actions">
+                                    {% if txn[1] in blacklisted_cards %}
+                                    <form action="{{ url_for('unflag_entity_by_value') }}" method="POST">
+                                        <input type="hidden" name="entity_value" value="{{ txn[1] }}">
+                                        <button type="submit" class="btn-mini safe">Unflag</button>
+                                    </form>
+                                    {% else %}
+                                    <form action="{{ url_for('flag_entity_quick') }}" method="POST">
+                                        <input type="hidden" name="card_masked" value="{{ txn[1] }}">
+                                        <button type="submit" class="btn-mini danger">Flag</button>
+                                    </form>
+                                    {% endif %}
+                                    {% if txn[7] != 'Fraud Reported' %}
+                                    <form action="{{ url_for('report_fraud', txn_id=txn[0]) }}" method="POST">
+                                        <button type="submit" class="btn-mini">Report</button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr class="empty-row"><td colspan="8">No transactions found.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </section>
     </div>
 </body>

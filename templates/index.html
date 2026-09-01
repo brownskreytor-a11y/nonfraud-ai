@@ -71,11 +71,14 @@
             border-radius: 4px;
             padding: 32px;
         }
-        .field { display: flex; flex-direction: column; position: relative; }
+        .field { display: flex; flex-direction: column; position: relative; min-width: 0; }
         .field.full { grid-column: span 2; }
 
         label { font-size: 12.5px; font-weight: 500; color: var(--muted); margin-bottom: 7px; }
         input, select {
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
             font-family: 'IBM Plex Mono', monospace;
             font-size: 14.5px;
             padding: 10px 2px;
@@ -121,6 +124,15 @@
 
         .tag { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 8px; border-radius: 3px; background: #E7ECF2; color: var(--navy); }
         .empty-row td { text-align: center; color: var(--muted); padding: 36px 0; }
+
+        .table-scroll { overflow-x: auto; }
+
+        @media (max-width: 640px) {
+            body { padding: 32px 16px 60px; }
+            form.intake { grid-template-columns: 1fr; padding: 22px; gap: 18px; }
+            .field.full { grid-column: span 1; }
+            button.submit-btn { grid-column: span 1; }
+        }
     </style>
 </head>
 <body>
@@ -176,32 +188,34 @@
         <h1 class="section-title">Transaction Register</h1>
         <p class="section-note">A running record of transactions submitted in this session.</p>
 
-        <table class="register">
-            <thead>
-                <tr>
-                    <th>Card</th>
-                    <th>Issuer</th>
-                    <th>Amount</th>
-                    <th>Device Time</th>
-                    <th>Velocity</th>
-                    <th>Proximity</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for log in logs %}
-                <tr>
-                    <td class="mono">{{ log[1] }}</td>
-                    <td><span class="tag">{{ log[2] }}</span></td>
-                    <td class="num">${{ "%.2f"|format(log[3]) }}</td>
-                    <td class="mono" style="color: var(--muted);">{{ log[4] }}</td>
-                    <td class="mono">{{ log[5] }}x</td>
-                    <td class="mono" style="color: var(--muted);">{{ log[7] }} km</td>
-                </tr>
-                {% else %}
-                <tr class="empty-row"><td colspan="6">No transactions logged yet. Submit one above to get started.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="table-scroll">
+            <table class="register">
+                <thead>
+                    <tr>
+                        <th>Card</th>
+                        <th>Issuer</th>
+                        <th>Amount</th>
+                        <th>Device Time</th>
+                        <th>Velocity</th>
+                        <th>Proximity</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td class="mono">{{ log[1] }}</td>
+                        <td><span class="tag">{{ log[2] }}</span></td>
+                        <td class="num">${{ "%.2f"|format(log[3]) }}</td>
+                        <td class="mono" style="color: var(--muted);">{{ log[4] }}</td>
+                        <td class="mono">{{ log[5] }}x</td>
+                        <td class="mono" style="color: var(--muted);">{{ log[7] }} km</td>
+                    </tr>
+                    {% else %}
+                    <tr class="empty-row"><td colspan="6">No transactions logged yet. Submit one above to get started.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <script>

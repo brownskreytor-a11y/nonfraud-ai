@@ -164,7 +164,16 @@ MODEL_PATH = "model.pkl"
 model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
 
 @app.route('/', methods=['GET'])
-def index():
+def home():
+    # Root URL now lands on the admin area: straight to the dashboard if
+    # already signed in, otherwise the login page. The transaction
+    # simulation form lives at /intake and is linked from there.
+    if session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+    return redirect(url_for('admin_login'))
+
+@app.route('/intake', methods=['GET'])
+def transaction_intake():
     init_db()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -256,7 +265,7 @@ def predict():
     conn.commit()
     conn.close()
 
-    return redirect(url_for('index'))
+    return redirect(url_for('transaction_intake'))
 
 @app.route('/api/evaluate', methods=['POST'])
 def api_evaluate():
