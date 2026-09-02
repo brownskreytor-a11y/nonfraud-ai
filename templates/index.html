@@ -35,8 +35,10 @@
 
         .masthead {
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
-            align-items: baseline;
+            align-items: center;
+            gap: 10px;
             border-bottom: 2px solid var(--ink);
             padding-bottom: 18px;
             margin-bottom: 8px;
@@ -48,11 +50,27 @@
             letter-spacing: -0.01em;
         }
         .wordmark span { color: var(--brass); }
+        .masthead-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
         .masthead .tag-label {
             font-size: 13px;
             color: var(--muted);
             font-family: 'IBM Plex Mono', monospace;
         }
+        .admin-link {
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-size: 13px;
+            color: var(--navy);
+            text-decoration: none;
+            border: 1px solid var(--hairline);
+            padding: 7px 14px;
+            border-radius: 3px;
+            white-space: nowrap;
+        }
+        .admin-link:hover { background: var(--navy); color: white; border-color: var(--navy); }
 
         h1.section-title {
             font-family: 'Source Serif 4', serif;
@@ -139,7 +157,10 @@
     <div class="sheet">
         <div class="masthead">
             <div class="wordmark">Non<span>Fraud</span>-AI</div>
-            <div class="tag-label">Transaction Intake</div>
+            <div class="masthead-right">
+                <div class="tag-label">Transaction Intake</div>
+                <a href="{{ url_for('admin_dashboard') }}" class="admin-link">Back to Admin Dashboard</a>
+            </div>
         </div>
 
         <h1 class="section-title">New Transaction</h1>
