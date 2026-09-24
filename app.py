@@ -104,17 +104,19 @@ OTP_TTL_SECONDS = 300
 # is cancelled outright, since cross-border plus an already-high score is
 # treated as decided rather than left for manual review; a same-country
 # transaction just lands as Pending regardless of score, same as everything
-# else, and only a human on the admin dashboard can cancel it from there. A
-# blacklisted card/IP is the only thing that bypasses the OTP challenge
-# entirely and lands as Flagged outright.
+# else, and only a human on the admin dashboard can cancel it from there.
+# Two things bypass the OTP challenge entirely rather than triggering it: a
+# blacklisted card/IP lands as Flagged outright, and a card rapid-firing at
+# RAPID_FIRE_CANCEL_THRESHOLD or beyond is cancelled outright -- see that
+# constant below.
 AUTO_CANCEL_RISK_THRESHOLD = 75
 
 # How far back a prior transaction on the same card still counts toward
-# velocity_count -- e.g. a transaction 10 minutes ago counts, one from
-# 2 hours ago doesn't. Kept as one named constant because it's used in two
+# velocity_count -- e.g. a transaction 5 minutes ago counts, one from
+# 20 minutes ago doesn't. Kept as one named constant because it's used in two
 # places (the /predict and /api/evaluate velocity loops) that must always
 # agree, rather than the two loops each hardcoding their own cutoff.
-VELOCITY_WINDOW_SECONDS = 25 * 60
+VELOCITY_WINDOW_SECONDS = 10 * 60
 
 # velocity_count is 1 for a card's first transaction inside the window above
 # and increments for every prior one found within it, so a value of 2 means
@@ -125,8 +127,23 @@ VELOCITY_WINDOW_SECONDS = 25 * 60
 # strong enough signal on its own to warrant step-up verification, the same
 # way a large amount or a different-country card already are. This has no
 # extra effect on a different-country card, since that already requires OTP
-# unconditionally from its first attempt.
+# unconditionally from its first attempt. This only covers attempts 2-4 --
+# see RAPID_FIRE_CANCEL_THRESHOLD for what happens starting at attempt 5.
 RAPID_FIRE_VELOCITY_THRESHOLD = 2
+
+# At 5+ transactions on the same card within VELOCITY_WINDOW_SECONDS, the
+# benefit of the doubt runs out: this looks less like a cardholder retrying
+# a purchase and more like card testing or a scripted attack, so the
+# transaction is auto-cancelled outright rather than getting yet another OTP
+# prompt -- a code being entered correctly at that rate doesn't meaningfully
+# distinguish "the real cardholder is testing the demo" from "an attacker
+# who also has the phone," so there's nothing to gain from asking. This
+# takes priority over every other rule, including blacklist's neighbor
+# below and the different-country card's usual unconditional OTP -- once a
+# card is rapid-firing at this rate, cross-border status stops mattering.
+# Attempts 2-4 still just require OTP (RAPID_FIRE_VELOCITY_THRESHOLD); only
+# attempt 5 and beyond gets cancelled instead.
+RAPID_FIRE_CANCEL_THRESHOLD = 5
 
 # Clearing the one-time-code challenge no longer discounts the stored risk
 # score -- a verified transaction still carries its real, pre-challenge risk
@@ -479,15 +496,19 @@ def predict():
     prediction_str = f"{risk_percentage}% Fraud Risk"
 
     # Blacklisted entities auto-flag and skip everything else -- that's a
-    # deterministic, already-confirmed signal, not a score. Nothing else is
-    # decided pre-OTP anymore: a score over AUTO_CANCEL_RISK_THRESHOLD no
-    # longer skips straight to Cancelled before the cardholder gets a chance
-    # to verify -- it just adds to the reasons the OTP challenge below gets
-    # triggered. Everything that isn't blacklisted starts out 'Pending' here;
-    # verify_otp() below is what actually decides a different-country card's
-    # fate once the code is entered (see AUTO_CANCEL_RISK_THRESHOLD).
+    # deterministic, already-confirmed signal, not a score. A card rapid-
+    # firing at RAPID_FIRE_CANCEL_THRESHOLD (5) or beyond is the other thing
+    # decided outright here, ahead of everything below -- see that constant.
+    # Nothing else is decided pre-OTP: a score over AUTO_CANCEL_RISK_THRESHOLD
+    # no longer skips straight to Cancelled before the cardholder gets a
+    # chance to verify -- it just adds to the reasons the OTP challenge below
+    # gets triggered. Everything else starts out 'Pending' here; verify_otp()
+    # below is what actually decides a different-country card's fate once
+    # the code is entered (see AUTO_CANCEL_RISK_THRESHOLD).
     if is_blacklisted:
         tx_status = 'Flagged'
+    elif velocity_count >= RAPID_FIRE_CANCEL_THRESHOLD:
+        tx_status = 'Cancelled'
     else:
         tx_status = 'Pending'
 
@@ -563,6 +584,12 @@ def predict():
     conn.commit()
     conn.close()
 
+    # tx_status can only be 'Cancelled' here via the rapid-fire rule above --
+    # every other path that lands on 'Cancelled' (the different-country
+    # post-OTP case) goes through verify_otp()'s own redirect instead, and
+    # this one still had no OTP shown at all, so it needs its own explanation.
+    if tx_status == 'Cancelled':
+        return redirect(url_for('transaction_intake', notice=f"Transaction cancelled -- {velocity_count} transactions on this card within {VELOCITY_WINDOW_SECONDS // 60} minutes exceeded the rapid-fire limit."))
     return redirect(url_for('transaction_intake'))
 
 @app.route('/verify_otp', methods=['POST'])
@@ -718,7 +745,7 @@ def api_evaluate():
     # verification, so otp_verified stays 0 and the caller is told to
     # collect that verification on their end before treating this as final.
     # A score over AUTO_CANCEL_RISK_THRESHOLD, or velocity_count reaching
-    # RAPID_FIRE_VELOCITY_THRESHOLD (this card's 2nd+ transaction within
+    # RAPID_FIRE_VELOCITY_THRESHOLD (this card's 2nd-4th transaction within
     # VELOCITY_WINDOW_SECONDS, regardless of amount), each just become
     # another reason OTP_REQUIRED is returned instead of an outright
     # decline, same as /predict -- but unlike /predict's verify_otp(), this
@@ -727,9 +754,15 @@ def api_evaluate():
     # different-country card gets there once its risk is still over
     # threshold after the code is entered. A caller integrating against this
     # API is responsible for that follow-up decision on its own end.
+    # RAPID_FIRE_CANCEL_THRESHOLD (5+) is different: like blacklist, it's
+    # decided outright here with no OTP offered at all, same as /predict.
     if is_blacklisted:
         tx_status = 'Flagged'
         action_status = "BLOCK"
+        otp_required = False
+    elif velocity_count >= RAPID_FIRE_CANCEL_THRESHOLD:
+        tx_status = 'Cancelled'
+        action_status = "AUTO_CANCELLED"
         otp_required = False
     elif is_different_country or amount >= OTP_REVIEW_THRESHOLD or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD or velocity_count >= RAPID_FIRE_VELOCITY_THRESHOLD:
         tx_status = 'Pending'
@@ -753,6 +786,8 @@ def api_evaluate():
 
     if is_blacklisted:
         status_text = "Blacklisted & Blocked"
+    elif tx_status == 'Cancelled':
+        status_text = f"Auto-cancelled -- {velocity_count} transactions on this card within {VELOCITY_WINDOW_SECONDS // 60} minutes exceeded the rapid-fire limit"
     elif otp_required:
         status_text = "Step-up verification (OTP) required before this can be finalized"
     elif tx_status == 'Pending':

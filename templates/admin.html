@@ -362,7 +362,7 @@
                                 {% set b = (78 - 31 * risk_val / 100) | int %}
                                 <span class="risk-tag" style="background-color: rgb({{ r }},{{ g }},{{ b }});">{{ txn[6] }}</span>
                                 {% set signals = [] %}
-                                {% if txn[8] is not none and txn[8] >= 2 %}{% set _ = signals.append(txn[8]|string ~ " transactions in the last 25 min") %}{% endif %}
+                                {% if txn[8] is not none and txn[8] >= 2 %}{% set _ = signals.append(txn[8]|string ~ " transactions in the last 10 min") %}{% endif %}
                                 {% if txn[3] >= 1000 %}{% set _ = signals.append("Large amount") %}{% endif %}
                                 {% if txn[9] is not none and txn[9] > 1000 %}{% set _ = signals.append("Far from home") %}{% endif %}
                                 {% if signals %}
