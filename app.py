@@ -31,6 +31,25 @@ HOME_LAT = 5.6037
 HOME_LNG = -0.1870
 HOME_COUNTRY = "GH"
 
+# The floor under the model's raw output, and the new "zero" the whole 0-100
+# scale gets rescaled onto -- not a simple clamp. The model's raw 0-100%
+# output is proportionally stretched into the 20-100% band (see the
+# `BASELINE_RISK_FLOOR + raw * (1 - BASELINE_RISK_FLOOR)` calculation at each
+# call site below), so raw 0% becomes exactly 20%, raw 100% stays 100%, and
+# everything in between is scaled to fit -- a low raw score gets pushed up by
+# close to the full 20 points, a high one by much less. Because this
+# stretches the *entire* range and not just the bottom of it, it can change
+# outcomes: a raw score that used to land just under AUTO_CANCEL_RISK_THRESHOLD
+# (75%) can cross it after rescaling (e.g. a raw ~69% becomes ~75%), which
+# means it's now also possible for the rescale alone to add an OTP
+# requirement or a post-OTP cancel on a different-country card that a plain
+# floor never would have. This is a deliberate stricter-by-default posture,
+# not a side effect to work around. The hard business-rule floors below
+# (DIFFERENT_COUNTRY_RISK_FLOOR, the far-from-home+amount combo) are still
+# applied as plain floors on top of the rescaled value, since those are
+# fixed minimums regardless of scale.
+BASELINE_RISK_FLOOR = 0.20
+
 # A transaction on a card issued outside the cardholder's home country is a
 # classic cross-border fraud signal on its own, independent of amount or
 # velocity -- so it gets a risk floor and always triggers the OTP step-up,
@@ -437,11 +456,19 @@ def predict():
         except Exception:
             fraud_proba = 0.05
 
+        # Rescale the model's raw 0-100% output onto the 20-100% band before
+        # any other floor is applied -- see BASELINE_RISK_FLOOR. This is a
+        # proportional stretch, not a max()/clamp: it changes every score,
+        # not just the low ones near the old floor. The business-rule floors
+        # below are still plain max()s applied on top of this rescaled
+        # value, since they're fixed minimums independent of scale.
+        fraud_proba = BASELINE_RISK_FLOOR + fraud_proba * (1 - BASELINE_RISK_FLOOR)
+
         # A card issued outside the cardholder's home country is checked
-        # before the other override rules below -- it sets a 40% floor
+        # before the other override rules below -- it sets a 52% floor
         # first, so amount/distance can still push it higher (e.g. also
         # far from home + large amount still lands on the 78% floor), but
-        # it never drops back below 40% just for being foreign-issued.
+        # it never drops back below 52% just for being foreign-issued.
         if is_different_country:
             fraud_proba = max(fraud_proba, DIFFERENT_COUNTRY_RISK_FLOOR)
 
@@ -669,6 +696,10 @@ def api_evaluate():
             fraud_proba = model.predict_proba(features)[0][1]
         except Exception:
             fraud_proba = 0.05
+
+        # See BASELINE_RISK_FLOOR / the matching comment in /predict --
+        # proportional rescale onto the 20-100% band, not a max()/clamp.
+        fraud_proba = BASELINE_RISK_FLOOR + fraud_proba * (1 - BASELINE_RISK_FLOOR)
 
         if is_different_country:
             fraud_proba = max(fraud_proba, DIFFERENT_COUNTRY_RISK_FLOOR)
