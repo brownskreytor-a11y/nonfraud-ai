@@ -90,6 +90,25 @@ OTP_TTL_SECONDS = 300
 # entirely and lands as Flagged outright.
 AUTO_CANCEL_RISK_THRESHOLD = 75
 
+# How far back a prior transaction on the same card still counts toward
+# velocity_count -- e.g. a transaction 10 minutes ago counts, one from
+# 2 hours ago doesn't. Kept as one named constant because it's used in two
+# places (the /predict and /api/evaluate velocity loops) that must always
+# agree, rather than the two loops each hardcoding their own cutoff.
+VELOCITY_WINDOW_SECONDS = 25 * 60
+
+# velocity_count is 1 for a card's first transaction inside the window above
+# and increments for every prior one found within it, so a value of 2 means
+# this is that card's *second* transaction within VELOCITY_WINDOW_SECONDS.
+# A same-country transaction now requires the OTP challenge starting at that
+# second attempt, regardless of how small the amount is or how low the
+# model's score comes back -- rapid repeat use of a card is treated as a
+# strong enough signal on its own to warrant step-up verification, the same
+# way a large amount or a different-country card already are. This has no
+# extra effect on a different-country card, since that already requires OTP
+# unconditionally from its first attempt.
+RAPID_FIRE_VELOCITY_THRESHOLD = 2
+
 # Clearing the one-time-code challenge no longer discounts the stored risk
 # score -- a verified transaction still carries its real, pre-challenge risk
 # percentage into admin review. Passing OTP only proves the cardholder holds
@@ -401,7 +420,7 @@ def predict():
             try:
                 p_time_str = past[0].strip().split('.')[0]
                 p_dt = datetime.strptime(p_time_str, "%Y-%m-%d %H:%M:%S")
-                if 0 <= (dt_naive - p_dt).total_seconds() <= 3600:
+                if 0 <= (dt_naive - p_dt).total_seconds() <= VELOCITY_WINDOW_SECONDS:
                     velocity_count += 1
             except Exception:
                 pass
@@ -445,9 +464,13 @@ def predict():
     else:
         tx_status = 'Pending'
 
-    # Large amounts, foreign-issued cards, and high risk scores don't get
-    # inserted straight away -- they have to clear a one-time-code challenge
-    # first. Nothing is written to the transactions table until verify_otp()
+    # Large amounts, foreign-issued cards, high risk scores, and rapid repeat
+    # use of the same card (velocity_count >= RAPID_FIRE_VELOCITY_THRESHOLD,
+    # i.e. this card's 2nd+ transaction within VELOCITY_WINDOW_SECONDS) don't
+    # get inserted straight away -- they have to clear a one-time-code
+    # challenge first. That last condition fires regardless of amount, so
+    # even a low-value second attempt in quick succession gets challenged.
+    # Nothing is written to the transactions table until verify_otp()
     # confirms the code -- and for a different-country card, verify_otp()
     # then checks risk_percentage again after the code is confirmed and can
     # still cancel it outright, rather than assuming a cleared challenge
@@ -456,7 +479,7 @@ def predict():
     # blacklisted card auto-flags, bypassing the challenge entirely since
     # there's nothing to gain from asking for a code on a transaction that's
     # already decided.
-    if tx_status == 'Pending' and (amount >= OTP_REVIEW_THRESHOLD or is_different_country or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD):
+    if tx_status == 'Pending' and (amount >= OTP_REVIEW_THRESHOLD or is_different_country or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD or velocity_count >= RAPID_FIRE_VELOCITY_THRESHOLD):
         conn.close()
 
         # Try a real SMS via Arkesel first. Arkesel generates and holds the
@@ -630,7 +653,7 @@ def api_evaluate():
             try:
                 p_time_str = past[0].strip().split('.')[0]
                 p_dt = datetime.strptime(p_time_str, "%Y-%m-%d %H:%M:%S")
-                if 0 <= (dt - p_dt).total_seconds() <= 3600:
+                if 0 <= (dt - p_dt).total_seconds() <= VELOCITY_WINDOW_SECONDS:
                     velocity_count += 1
             except Exception:
                 pass
@@ -659,23 +682,25 @@ def api_evaluate():
     # This endpoint is a machine-to-machine API call, not a browser session,
     # so it can't run the interactive one-time-code challenge that /predict
     # uses for the same threshold (see verify_otp()). It still has to tell
-    # the caller the truth: a large amount, different-country card, or high
-    # risk score here has NOT cleared step-up verification, so otp_verified
-    # stays 0 and the caller is told to collect that verification on their
-    # end before treating this as final. A score over
-    # AUTO_CANCEL_RISK_THRESHOLD just becomes another reason OTP_REQUIRED is
-    # returned instead of an outright decline, same as /predict -- but
-    # unlike /predict's verify_otp(), this endpoint has no matching "confirm
-    # the code, then decide" step of its own, so it can't apply the
-    # post-verification auto-cancel that a different-country card gets
-    # there once its risk is still over threshold after the code is
-    # entered. A caller integrating against this API is responsible for
-    # that follow-up decision on its own end.
+    # the caller the truth: a large amount, different-country card, high risk
+    # score, or rapid repeat use of the card here has NOT cleared step-up
+    # verification, so otp_verified stays 0 and the caller is told to
+    # collect that verification on their end before treating this as final.
+    # A score over AUTO_CANCEL_RISK_THRESHOLD, or velocity_count reaching
+    # RAPID_FIRE_VELOCITY_THRESHOLD (this card's 2nd+ transaction within
+    # VELOCITY_WINDOW_SECONDS, regardless of amount), each just become
+    # another reason OTP_REQUIRED is returned instead of an outright
+    # decline, same as /predict -- but unlike /predict's verify_otp(), this
+    # endpoint has no matching "confirm the code, then decide" step of its
+    # own, so it can't apply the post-verification auto-cancel that a
+    # different-country card gets there once its risk is still over
+    # threshold after the code is entered. A caller integrating against this
+    # API is responsible for that follow-up decision on its own end.
     if is_blacklisted:
         tx_status = 'Flagged'
         action_status = "BLOCK"
         otp_required = False
-    elif is_different_country or amount >= OTP_REVIEW_THRESHOLD or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD:
+    elif is_different_country or amount >= OTP_REVIEW_THRESHOLD or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD or velocity_count >= RAPID_FIRE_VELOCITY_THRESHOLD:
         tx_status = 'Pending'
         action_status = "OTP_REQUIRED"
         otp_required = True
