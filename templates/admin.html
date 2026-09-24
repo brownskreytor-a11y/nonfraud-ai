@@ -124,7 +124,17 @@
         }
         form.flag-form button:hover { background: #6b2222; }
 
-        table.ledger { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); border-radius: 4px; overflow: hidden; }
+        /* border-spacing: 0 with separate (not collapse) -- position: sticky
+           on a <td>/<th> silently fails to stick under border-collapse:
+           collapse in Chromium and Firefox, which is what pins the actions
+           column below. Renders the same here since only per-cell
+           border-bottom is used. */
+        /* No overflow:hidden here -- it would create its own scroll-clip
+           box and break the sticky actions column below (sticky positions
+           relative to the nearest ancestor scroll container, which needs
+           to stay .table-scroll, not this table itself). The wrapping
+           .table-scroll div already clips/rounds the visible edges. */
+        table.ledger { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--surface); border: 1px solid var(--hairline); border-radius: 4px; }
         table.ledger th {
             text-align: left;
             font-size: 11.5px;
@@ -177,7 +187,24 @@
             .metric:last-child { border-bottom: none; }
             form.flag-form { grid-template-columns: 1fr; }
             .section-head { flex-direction: column; align-items: flex-start; gap: 8px; }
+            .row-actions { flex-direction: column; align-items: stretch; min-width: 90px; }
+            .row-actions form { width: 100%; }
+            .btn-mini { width: 100%; padding: 7px 10px; white-space: nowrap; }
         }
+
+        /* Pinned to the right edge of the scrolling table so the action
+           buttons (Approve/Cancel/Report) are always visible without
+           having to scroll the table horizontally to find them -- this
+           matters most on mobile, where the ledger table is wider than
+           the screen. */
+        .actions-col {
+            position: sticky;
+            right: 0;
+            background: var(--surface);
+            box-shadow: -6px 0 8px -6px rgba(20, 27, 46, 0.15);
+        }
+        th.actions-col { background: #F7F8FA; }
+        table.ledger tr:hover td.actions-col { background: #FAFBFC; }
 
         .row-actions { display: flex; gap: 6px; }
         .btn-mini {
@@ -313,7 +340,7 @@
                     <thead>
                         <tr>
                             <th>ID</th><th>Card</th><th>Issuer</th><th>Amount</th><th>Time</th>
-                            <th>Risk</th><th>Status</th><th></th>
+                            <th>Risk</th><th>Status</th><th class="actions-col"></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -359,7 +386,7 @@
                                     <span class="status-tag status-approved">{{ txn[7] }}</span>
                                 {% endif %}
                             </td>
-                            <td>
+                            <td class="actions-col">
                                 <div class="row-actions">
                                     {% if txn[7] == 'Pending' %}
                                     <form action="{{ url_for('approve_transaction', txn_id=txn[0]) }}" method="POST">

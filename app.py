@@ -503,7 +503,7 @@ def verify_otp():
     conn.close()
 
     session.pop('pending_otp', None)
-    return redirect(url_for('transaction_intake', success='Code verified -- transaction submitted for admin review.'))
+    return redirect(url_for('transaction_intake', success='Verification successful.'))
 
 @app.route('/api/evaluate', methods=['POST'])
 def api_evaluate():

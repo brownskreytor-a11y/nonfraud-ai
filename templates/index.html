@@ -289,7 +289,7 @@
 
             <div class="field">
                 <label for="cvv">CVV</label>
-                <input type="password" id="cvv" name="cvv" placeholder="•••" maxlength="4" required>
+                <input type="password" id="cvv" name="cvv" placeholder="•••" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="off" required>
             </div>
 
             <div class="field full">
@@ -397,6 +397,11 @@
             expiryError.textContent = message;
             expiryError.style.display = 'block';
         }
+
+        const cvvInput = document.getElementById('cvv');
+        cvvInput.addEventListener('input', (e) => {
+            e.target.value = e.target.value.replace(/\D/g, '');
+        });
 
         const amountInput = document.getElementById('amount');
         const amountError = document.getElementById('amount-error');
