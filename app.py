@@ -12,13 +12,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 
 try:
-    from twilio.rest import Client as TwilioClient
-    from twilio.base.exceptions import TwilioRestException
+    import requests
 except ImportError:
-    # twilio isn't installed -- the app still runs, it just can't send real
-    # SMS and always falls back to the on-screen demo code below.
-    TwilioClient = None
-    TwilioRestException = Exception
+    # requests isn't installed -- the app still runs, it just can't send
+    # real SMS and always falls back to the on-screen demo code below.
+    requests = None
 
 app = Flask(__name__)
 # Reads SECRET_KEY from the environment in production. Falls back to a
@@ -75,21 +73,69 @@ OTP_TTL_SECONDS = 300
 OTP_RISK_REDUCTION_FACTOR = 0.5
 OTP_RISK_REDUCTION_MAX_AMOUNT = 499
 
-# Real SMS delivery via Twilio Verify -- set these three in the environment
-# (never hardcode them) to send an actual code to the cardholder's phone.
-# TWILIO_VERIFY_SERVICE_SID comes from a "Verify Service" created in the
-# Twilio console, separate from the Account SID. When any of the three is
-# missing, or a send call fails (no credit, unverified trial number, no
-# network), the app transparently falls back to generating its own code and
-# showing it on screen -- the review step is never skipped, only the
-# delivery channel changes.
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
-TWILIO_VERIFY_SERVICE_SID = os.environ.get("TWILIO_VERIFY_SERVICE_SID")
+# Real SMS delivery via Arkesel's OTP API -- set ARKESEL_API_KEY in the
+# environment (never hardcode it) to send an actual code to the cardholder's
+# phone. ARKESEL_SENDER_ID is optional (defaults below) and controls the
+# sender name shown on the SMS. When the key is missing, or a send/verify
+# call fails (no credit, bad number, no network), the app transparently
+# falls back to generating its own code and showing it on screen -- the
+# review step is never skipped, only the delivery channel changes.
+ARKESEL_API_KEY = os.environ.get("ARKESEL_API_KEY")
+ARKESEL_SENDER_ID = os.environ.get("ARKESEL_SENDER_ID", "NonFraud")
+ARKESEL_BASE_URL = "https://sms.arkesel.com/api/otp"
 
-twilio_client = None
-if TwilioClient and TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID:
-    twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+arkesel_configured = bool(requests and ARKESEL_API_KEY)
+
+
+def _normalize_phone_for_arkesel(phone_number):
+    """Arkesel expects international format with no leading '+' (e.g.
+    233544919953). Accepts a local Ghana number typed with a leading 0
+    (e.g. 0544919953) and converts it, since that's how most people will
+    naturally type their own number."""
+    cleaned = phone_number.strip().replace(' ', '').replace('-', '')
+    if cleaned.startswith('+'):
+        cleaned = cleaned[1:]
+    if cleaned.startswith('0') and len(cleaned) == 10:
+        cleaned = '233' + cleaned[1:]
+    return cleaned
+
+
+def _arkesel_send_otp(phone_number):
+    """Generates and sends an OTP via Arkesel. Arkesel holds the code
+    server-side (like Twilio Verify did) -- nothing to store locally beyond
+    knowing a real send succeeded. Returns True on success, False on any
+    failure (network, bad number, insufficient balance, etc.)."""
+    try:
+        resp = requests.post(
+            f"{ARKESEL_BASE_URL}/generate",
+            headers={"api-key": ARKESEL_API_KEY, "Content-Type": "application/json"},
+            json={
+                "expiry": max(1, min(10, OTP_TTL_SECONDS // 60)),
+                "length": 6,
+                "medium": "sms",
+                "message": "Your NonFraud-AI verification code is: %otp_code%",
+                "number": _normalize_phone_for_arkesel(phone_number),
+                "sender_id": ARKESEL_SENDER_ID,
+                "type": "numeric",
+            },
+            timeout=10,
+        )
+        return resp.json().get("code") == "1000"
+    except Exception:
+        return False
+
+
+def _arkesel_verify_otp(phone_number, code):
+    try:
+        resp = requests.post(
+            f"{ARKESEL_BASE_URL}/verify",
+            headers={"api-key": ARKESEL_API_KEY, "Content-Type": "application/json"},
+            json={"code": code, "number": _normalize_phone_for_arkesel(phone_number)},
+            timeout=10,
+        )
+        return resp.json().get("code") == "1100"
+    except Exception:
+        return False
 
 # Expanded Global Bank Issuer Coordinates Database (Lat, Lng)
 ISSUER_LOCATIONS = {
@@ -341,22 +387,18 @@ def predict():
     if not is_blacklisted and amount >= OTP_REVIEW_THRESHOLD:
         conn.close()
 
-        # Try a real SMS via Twilio Verify first. Twilio generates and holds
-        # the code itself (nothing to store locally), so a "delivery" flag
-        # is all that's needed to remember which path to check against
-        # later. Any reason it can't go out -- not configured, no network,
-        # unverified trial number, no credit -- falls back to a locally
-        # generated code shown on screen, so the review step itself never
-        # breaks even if the SMS side does.
+        # Try a real SMS via Arkesel first. Arkesel generates and holds the
+        # code itself (nothing to store locally), so a "delivery" flag is
+        # all that's needed to remember which path to check against later.
+        # Any reason it can't go out -- not configured, no network, bad
+        # number, no credit -- falls back to a locally generated code shown
+        # on screen, so the review step itself never breaks even if the SMS
+        # side does.
         otp_delivery = 'demo'
         otp_code = None
-        if twilio_client and phone_number:
-            try:
-                twilio_client.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verifications.create(
-                    to=phone_number, channel='sms')
-                otp_delivery = 'twilio'
-            except TwilioRestException:
-                otp_delivery = 'demo'
+        if arkesel_configured and phone_number:
+            if _arkesel_send_otp(phone_number):
+                otp_delivery = 'arkesel'
 
         if otp_delivery == 'demo':
             otp_code = f"{secrets.randbelow(1000000):06d}"
@@ -415,13 +457,8 @@ def verify_otp():
     entered_code = request.form.get('otp_code', '').strip()
     txn = pending['txn']
 
-    if pending['delivery'] == 'twilio' and twilio_client:
-        try:
-            check = twilio_client.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verification_checks.create(
-                to=pending['phone_number'], code=entered_code)
-            verified = (check.status == 'approved')
-        except TwilioRestException:
-            verified = False
+    if pending['delivery'] == 'arkesel' and arkesel_configured:
+        verified = _arkesel_verify_otp(pending['phone_number'], entered_code)
     else:
         verified = (entered_code == pending['code'])
 

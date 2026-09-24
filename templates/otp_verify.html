@@ -139,9 +139,9 @@
             <div class="row"><span class="k">Amount</span><span class="v">${{ "%.2f"|format(amount) }}</span></div>
         </div>
 
-        {% if delivery == 'twilio' %}
+        {% if delivery == 'arkesel' %}
         <div class="demo-note">
-            A verification code was sent via SMS to <strong>{{ phone_number }}</strong> through Twilio Verify. Check that phone for the code.
+            A verification code was sent via SMS to <strong>{{ phone_number }}</strong>. Check that phone for the code.
         </div>
         {% else %}
         <div class="demo-note">
