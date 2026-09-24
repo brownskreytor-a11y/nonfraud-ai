@@ -29,6 +29,22 @@ DB_NAME = "database.db"
 # Cardholder Home Baseline (Accra, Ghana)
 HOME_LAT = 5.6037
 HOME_LNG = -0.1870
+HOME_COUNTRY = "GH"
+
+# A transaction on a card issued outside the cardholder's home country is a
+# classic cross-border fraud signal on its own, independent of amount or
+# velocity -- so it gets a risk floor and always triggers the OTP step-up,
+# even for a small amount that would otherwise sail through untouched.
+DIFFERENT_COUNTRY_RISK_FLOOR = 0.40
+
+
+def _issuer_country(issuer_name):
+    """Pulls the 2-letter country code out of an issuer's display name,
+    e.g. "Ecobank Ghana (Accra, GH)" -> "GH". Every entry in
+    ISSUER_LOCATIONS is formatted "<name> (<city>, <XX>)"."""
+    if not issuer_name or ',' not in issuer_name or not issuer_name.endswith(')'):
+        return None
+    return issuer_name.rsplit(',', 1)[-1].strip(') ').strip()
 
 # Every evaluated transaction now requires manual admin review before it is
 # considered final -- the model's risk score is computed and shown, but it
@@ -326,6 +342,7 @@ def predict():
     lng = float(request.form.get('longitude', HOME_LNG))
     client_time_raw = request.form.get('client_time')
     phone_number = request.form.get('phone_number', '').strip()
+    is_different_country = _issuer_country(issuer_name) not in (None, HOME_COUNTRY)
 
     if amount > MAX_TRANSACTION_AMOUNT:
         return redirect(url_for('transaction_intake',
@@ -383,6 +400,14 @@ def predict():
         except Exception:
             fraud_proba = 0.05
 
+        # A card issued outside the cardholder's home country is checked
+        # before the other override rules below -- it sets a 40% floor
+        # first, so amount/distance can still push it higher (e.g. also
+        # far from home + large amount still lands on the 78% floor), but
+        # it never drops back below 40% just for being foreign-issued.
+        if is_different_country:
+            fraud_proba = max(fraud_proba, DIFFERENT_COUNTRY_RISK_FLOOR)
+
         if home_distance_km > 1000 and amount > 500:
             fraud_proba = max(fraud_proba, 0.78)
 
@@ -397,8 +422,10 @@ def predict():
     # Large amounts don't get inserted straight away -- they have to clear a
     # one-time-code challenge first. Nothing is written to the transactions
     # table until verify_otp() confirms the code (or the card is blacklisted,
-    # which bypasses this and auto-flags instead).
-    if not is_blacklisted and amount >= OTP_REVIEW_THRESHOLD:
+    # which bypasses this and auto-flags instead). A different-country card
+    # forces the same challenge regardless of amount -- cross-border use is
+    # a strong enough signal on its own to warrant step-up verification.
+    if not is_blacklisted and (amount >= OTP_REVIEW_THRESHOLD or is_different_country):
         conn.close()
 
         # Try a real SMS via Arkesel first. Arkesel generates and holds the
@@ -519,6 +546,7 @@ def api_evaluate():
     amount = float(data.get('amount', 0))
     lat = float(data.get('latitude', HOME_LAT))
     lng = float(data.get('longitude', HOME_LNG))
+    is_different_country = _issuer_country(issuer_name) not in (None, HOME_COUNTRY)
 
     if amount > MAX_TRANSACTION_AMOUNT:
         return jsonify({
@@ -572,6 +600,9 @@ def api_evaluate():
         except Exception:
             fraud_proba = 0.05
 
+        if is_different_country:
+            fraud_proba = max(fraud_proba, DIFFERENT_COUNTRY_RISK_FLOOR)
+
         if home_distance_km > 1000 and amount > 500:
             fraud_proba = max(fraud_proba, 0.78)
 
@@ -581,10 +612,11 @@ def api_evaluate():
     # This endpoint is a machine-to-machine API call, not a browser session,
     # so it can't run the interactive one-time-code challenge that /predict
     # uses for the same threshold (see verify_otp()). It still has to tell
-    # the caller the truth: a large amount here has NOT cleared step-up
-    # verification, so otp_verified stays 0 and the caller is told to
-    # collect that verification on their end before treating this as final.
-    otp_required = (not is_blacklisted) and amount >= OTP_REVIEW_THRESHOLD
+    # the caller the truth: a large amount or different-country card here
+    # has NOT cleared step-up verification, so otp_verified stays 0 and the
+    # caller is told to collect that verification on their end before
+    # treating this as final.
+    otp_required = (not is_blacklisted) and (amount >= OTP_REVIEW_THRESHOLD or is_different_country)
 
     if is_blacklisted:
         tx_status = 'Flagged'
