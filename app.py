@@ -56,22 +56,12 @@ OTP_REVIEW_THRESHOLD = 300
 OTP_MAX_ATTEMPTS = 3
 OTP_TTL_SECONDS = 300
 
-# Clearing the one-time-code challenge is itself a mitigating signal -- the
-# cardholder proved they hold the verification channel on file for this
-# card, which a stolen-card-only fraudster typically can't do. The stored
-# risk score reflects that: it's halved after a successful verification,
-# rather than being left at the pre-challenge number that made the review
-# necessary in the first place. The pre-verification score is still what's
-# shown on the challenge screen itself (that's what justified asking), and
-# it's still what the admin dashboard's Large-amount/velocity signal badges
-# key off of independently -- only the stored risk PERCENTAGE changes here.
-#
-# That mitigation only applies below OTP_RISK_REDUCTION_MAX_AMOUNT. Past it,
-# proving you hold the phone on file isn't treated as enough to lower the
-# score -- a high-value transaction still needs the admin to see the real,
-# unreduced risk number during manual review, OTP or not.
-OTP_RISK_REDUCTION_FACTOR = 0.5
-OTP_RISK_REDUCTION_MAX_AMOUNT = 499
+# Clearing the one-time-code challenge no longer discounts the stored risk
+# score -- a verified transaction still carries its real, pre-challenge risk
+# percentage into admin review. Passing OTP only proves the cardholder holds
+# the verification channel on file for this card; it doesn't by itself lower
+# how risky the transaction actually is, so the admin sees the same number
+# either way.
 
 # Real SMS/voice delivery via Arkesel's OTP API -- set ARKESEL_API_KEY in
 # the environment (never hardcode it) to send an actual code to the
@@ -501,12 +491,6 @@ def verify_otp():
                                delivery=pending['delivery'], medium=pending.get('medium', 'sms'), phone_number=pending['phone_number'],
                                error='Incorrect code.', attempts_left=OTP_MAX_ATTEMPTS - pending['attempts'])
 
-    if txn['amount'] <= OTP_RISK_REDUCTION_MAX_AMOUNT:
-        reduced_percentage = math.floor(txn['risk_percentage'] * OTP_RISK_REDUCTION_FACTOR)
-        reduced_prediction = f"{reduced_percentage}% Fraud Risk"
-    else:
-        reduced_prediction = txn['prediction']
-
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
@@ -514,7 +498,7 @@ def verify_otp():
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (txn['card_masked'], txn['card_hash'], txn['issuer_name'], txn['amount'], txn['device_time'],
           txn['velocity_count'], txn['home_distance_km'], txn['issuer_distance_km'], txn['device_ip'],
-          reduced_prediction, 'Pending', 1))
+          txn['prediction'], 'Pending', 1))
     conn.commit()
     conn.close()
 
