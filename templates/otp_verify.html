@@ -149,11 +149,7 @@
         </div>
         {% else %}
         <div class="demo-note">
-            {% if phone_number %}
-            Demo mode: SMS delivery wasn't available for this transaction (not configured, or the send failed), so the code is shown here instead of being delivered off-app.
-            {% else %}
-            Demo mode: no cardholder phone number was provided, so the code is shown here instead of being delivered off-app.
-            {% endif %}
+            SMS delivery wasn't available for this transaction, so the code is shown here instead of being delivered off-app.
             <span class="code">{{ otp_code }}</span>
         </div>
         {% endif %}
