@@ -120,8 +120,17 @@ def _arkesel_send_otp(phone_number):
             },
             timeout=10,
         )
-        return resp.json().get("code") == "1000"
-    except Exception:
+        data = resp.json()
+        ok = data.get("code") == "1000"
+        if not ok:
+            # Logged (not swallowed) so a real send failure -- bad key,
+            # unapproved sender ID, zero balance, wrong number format --
+            # shows up in Render's Logs tab instead of just silently
+            # falling back to demo mode with no way to tell why.
+            app.logger.warning("Arkesel OTP generate failed: HTTP %s, response=%s", resp.status_code, data)
+        return ok
+    except Exception as e:
+        app.logger.warning("Arkesel OTP generate error: %s", e)
         return False
 
 
@@ -133,8 +142,13 @@ def _arkesel_verify_otp(phone_number, code):
             json={"code": code, "number": _normalize_phone_for_arkesel(phone_number)},
             timeout=10,
         )
-        return resp.json().get("code") == "1100"
-    except Exception:
+        data = resp.json()
+        ok = data.get("code") == "1100"
+        if not ok:
+            app.logger.warning("Arkesel OTP verify failed: HTTP %s, response=%s", resp.status_code, data)
+        return ok
+    except Exception as e:
+        app.logger.warning("Arkesel OTP verify error: %s", e)
         return False
 
 # Expanded Global Bank Issuer Coordinates Database (Lat, Lng)
@@ -396,9 +410,12 @@ def predict():
         # side does.
         otp_delivery = 'demo'
         otp_code = None
-        if arkesel_configured and phone_number:
-            if _arkesel_send_otp(phone_number):
-                otp_delivery = 'arkesel'
+        if not arkesel_configured:
+            app.logger.info("Falling back to demo OTP: ARKESEL_API_KEY is not set.")
+        elif not phone_number:
+            app.logger.info("Falling back to demo OTP: no phone number was submitted with the transaction.")
+        elif _arkesel_send_otp(phone_number):
+            otp_delivery = 'arkesel'
 
         if otp_delivery == 'demo':
             otp_code = f"{secrets.randbelow(1000000):06d}"
