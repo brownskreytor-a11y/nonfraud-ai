@@ -141,7 +141,85 @@
         table.register tr:hover td { background: #F7F8FA; }
 
         .tag { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 8px; border-radius: 3px; background: #E7ECF2; color: var(--navy); }
+
+        .notice-banner {
+            background: #FBF0DD;
+            border: 1px solid #E9D9BC;
+            color: var(--brass-dark);
+            padding: 12px 16px;
+            border-radius: 4px;
+            font-size: 13.5px;
+            margin: 20px 0 0;
+        }
         .empty-row td { text-align: center; color: var(--muted); padding: 36px 0; }
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(20, 27, 46, 0.45);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        .modal-overlay.show { opacity: 1; pointer-events: auto; }
+        .modal-card {
+            background: var(--surface);
+            border-radius: 8px;
+            padding: 40px 36px 32px;
+            max-width: 340px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(20, 27, 46, 0.25);
+            transform: scale(0.92);
+            transition: transform 0.2s ease;
+        }
+        .modal-overlay.show .modal-card { transform: scale(1); }
+        .check-circle {
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            background: #E3EEE8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+        }
+        .check-circle svg { width: 36px; height: 36px; }
+        .check-circle .check-path {
+            stroke: var(--safe);
+            stroke-width: 3;
+            fill: none;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-dasharray: 30;
+            stroke-dashoffset: 30;
+        }
+        .modal-overlay.show .check-path { animation: draw-check 0.4s 0.15s ease forwards; }
+        @keyframes draw-check { to { stroke-dashoffset: 0; } }
+        .modal-card h3 {
+            font-family: 'Source Serif 4', serif;
+            font-size: 18px;
+            font-weight: 600;
+            margin: 0 0 8px;
+        }
+        .modal-card p { margin: 0 0 22px; color: var(--muted); font-size: 13.5px; }
+        .modal-card button {
+            background: var(--brass);
+            color: white;
+            border: none;
+            padding: 10px 26px;
+            border-radius: 3px;
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-weight: 500;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .modal-card button:hover { background: var(--brass-dark); }
 
         .table-scroll { overflow-x: auto; }
 
@@ -162,6 +240,23 @@
                 <a href="{{ url_for('admin_dashboard') }}" class="admin-link">Back to Admin Dashboard</a>
             </div>
         </div>
+
+        {% if notice %}
+        <div class="notice-banner">{{ notice }}</div>
+        {% endif %}
+
+        {% if success %}
+        <div class="modal-overlay" id="success-modal">
+            <div class="modal-card">
+                <div class="check-circle">
+                    <svg viewBox="0 0 24 24"><path class="check-path" d="M4 12.5 L9.5 18 L20 5" /></svg>
+                </div>
+                <h3>Verified</h3>
+                <p>{{ success }}</p>
+                <button type="button" onclick="document.getElementById('success-modal').classList.remove('show')">Done</button>
+            </div>
+        </div>
+        {% endif %}
 
         <h1 class="section-title">New Transaction</h1>
         <p class="section-note">Enter the transaction details below to run it through the fraud screening engine.</p>
@@ -195,6 +290,11 @@
             <div class="field">
                 <label for="cvv">CVV</label>
                 <input type="password" id="cvv" name="cvv" placeholder="•••" maxlength="4" required>
+            </div>
+
+            <div class="field full">
+                <label for="phone_number">Cardholder Phone (for high-value verification)</label>
+                <input type="tel" id="phone_number" name="phone_number" placeholder="+233241234567">
             </div>
 
             <div class="field full">
@@ -298,6 +398,14 @@
             expiryError.style.display = 'block';
         }
 
+        const amountInput = document.getElementById('amount');
+        const amountError = document.getElementById('amount-error');
+
+        amountInput.addEventListener('input', () => {
+            amountInput.classList.remove('error-input');
+            amountError.style.display = 'none';
+        });
+
         document.getElementById('payment-form').addEventListener('submit', (e) => {
             let rawCardVal = cardInput.value.replace(/\s+/g, '');
             if (rawCardVal.length < 15 || rawCardVal.length > 19) {
@@ -305,6 +413,16 @@
                 cardError.textContent = 'Incomplete card number. Must be 15 to 19 digits.';
                 cardError.style.display = 'block';
                 cardInput.focus();
+                e.preventDefault();
+                return;
+            }
+
+            const amountVal = parseFloat(amountInput.value);
+            if (!isNaN(amountVal) && amountVal > 5000) {
+                amountInput.classList.add('error-input');
+                amountError.textContent = 'Amount exceeds the $5,000 per-transaction limit.';
+                amountError.style.display = 'block';
+                amountInput.focus();
                 e.preventDefault();
             }
         });
@@ -316,6 +434,16 @@
                 document.getElementById('latitude').value = pos.coords.latitude.toFixed(4);
                 document.getElementById('longitude').value = pos.coords.longitude.toFixed(4);
             });
+        }
+
+        const successModal = document.getElementById('success-modal');
+        if (successModal) {
+            const closeModal = () => successModal.classList.remove('show');
+            successModal.addEventListener('click', (e) => {
+                if (e.target === successModal) closeModal();
+            });
+            requestAnimationFrame(() => requestAnimationFrame(() => successModal.classList.add('show')));
+            setTimeout(closeModal, 4000);
         }
     </script>
 </body>

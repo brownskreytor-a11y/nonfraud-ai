@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NonFraud-AI | Verification Required</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ink: #141B2E;
+            --paper: #EEF1F4;
+            --surface: #FFFFFF;
+            --navy: #1F3358;
+            --brass: #A9722E;
+            --brass-dark: #8C5E24;
+            --safe: #2E6A4E;
+            --danger: #8C2F2F;
+            --muted: #5B6472;
+            --hairline: #D8DCE2;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+            background: var(--paper);
+            color: var(--ink);
+            margin: 0;
+            padding: 56px 24px 80px;
+            line-height: 1.5;
+        }
+        .sheet { max-width: 520px; margin: 0 auto; }
+        .masthead { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 8px; }
+        .wordmark { font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 26px; }
+        .wordmark span { color: var(--brass); }
+
+        .risk-banner {
+            background: #FBF0DD;
+            border: 1px solid #E9D9BC;
+            color: var(--brass-dark);
+            padding: 14px 18px;
+            border-radius: 4px;
+            font-size: 13.5px;
+            margin: 28px 0 20px;
+        }
+        h1.section-title { font-family: 'Source Serif 4', serif; font-weight: 600; font-size: 21px; margin: 0 0 6px; }
+        p.section-note { color: var(--muted); font-size: 14px; margin: 0 0 24px; }
+
+        .txn-summary {
+            background: var(--surface);
+            border: 1px solid var(--hairline);
+            border-radius: 4px;
+            padding: 18px 22px;
+            margin-bottom: 24px;
+            font-size: 13.5px;
+        }
+        .txn-summary .row { display: flex; justify-content: space-between; padding: 5px 0; }
+        .txn-summary .k { color: var(--muted); }
+        .txn-summary .v { font-family: 'IBM Plex Mono', monospace; }
+
+        .demo-note {
+            font-size: 12px;
+            color: var(--muted);
+            font-family: 'IBM Plex Mono', monospace;
+            background: #F7F8FA;
+            border: 1px dashed var(--hairline);
+            padding: 12px 14px;
+            border-radius: 4px;
+            margin-bottom: 24px;
+        }
+        .demo-note .code {
+            display: block;
+            font-size: 24px;
+            letter-spacing: 5px;
+            color: var(--ink);
+            margin-top: 8px;
+            font-weight: 500;
+        }
+
+        form.otp-form { background: var(--surface); border: 1px solid var(--hairline); border-radius: 4px; padding: 24px; }
+        label { font-size: 12.5px; font-weight: 500; color: var(--muted); margin-bottom: 7px; display: block; }
+        input {
+            width: 100%;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 18px;
+            letter-spacing: 3px;
+            padding: 10px 2px;
+            border: none;
+            border-bottom: 1.5px solid var(--hairline);
+            background: transparent;
+            color: var(--ink);
+        }
+        input:focus { outline: none; border-bottom-color: var(--navy); }
+
+        .error-msg { font-size: 12.5px; color: var(--danger); margin: 10px 0 0; }
+
+        .actions { display: flex; gap: 10px; margin-top: 20px; }
+        button.submit-btn {
+            flex: 1;
+            background: var(--brass);
+            color: white;
+            border: none;
+            padding: 13px;
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-weight: 500;
+            font-size: 14.5px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        button.submit-btn:hover { background: var(--brass-dark); }
+        button.cancel-btn {
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid var(--hairline);
+            padding: 13px 18px;
+            font-family: 'IBM Plex Sans', sans-serif;
+            font-size: 14.5px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        button.cancel-btn:hover { background: #F7F8FA; }
+    </style>
+</head>
+<body>
+    <div class="sheet">
+        <div class="masthead">
+            <div class="wordmark">Non<span>Fraud</span>-AI</div>
+        </div>
+
+        <div class="risk-banner">
+            <strong>Additional Verification Required.</strong>
+        </div>
+
+        <h1 class="section-title">Enter Verification Code</h1>
+        <p class="section-note">6-digit code sent to the cardholder's registered device.</p>
+
+        <div class="txn-summary">
+            <div class="row"><span class="k">Card</span><span class="v">{{ card_masked }}</span></div>
+            <div class="row"><span class="k">Issuer</span><span class="v">{{ issuer_name }}</span></div>
+            <div class="row"><span class="k">Amount</span><span class="v">${{ "%.2f"|format(amount) }}</span></div>
+        </div>
+
+        {% if delivery == 'twilio' %}
+        <div class="demo-note">
+            A verification code was sent via SMS to <strong>{{ phone_number }}</strong> through Twilio Verify. Check that phone for the code.
+        </div>
+        {% else %}
+        <div class="demo-note">
+            {% if phone_number %}
+            Demo mode: SMS delivery wasn't available for this transaction (not configured, or the send failed), so the code is shown here instead of being delivered off-app.
+            {% else %}
+            Demo mode: no cardholder phone number was provided, so the code is shown here instead of being delivered off-app.
+            {% endif %}
+            <span class="code">{{ otp_code }}</span>
+        </div>
+        {% endif %}
+
+        <form action="{{ url_for('verify_otp') }}" method="POST" class="otp-form">
+            <label for="otp_code">Verification Code</label>
+            <input type="text" id="otp_code" name="otp_code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" required autofocus>
+            {% if error %}
+            <p class="error-msg">{{ error }}{% if attempts_left is not none %} ({{ attempts_left }} attempt{{ 's' if attempts_left != 1 else '' }} left){% endif %}</p>
+            {% endif %}
+            <div class="actions">
+                <button type="submit" class="submit-btn">Verify &amp; Submit</button>
+                <button type="submit" name="cancel" value="1" class="cancel-btn" formnovalidate>Cancel Transaction</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

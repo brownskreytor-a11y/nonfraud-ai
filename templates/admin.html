@@ -148,6 +148,13 @@
             padding: 3px 9px;
             border-radius: 3px;
         }
+        .signal-note {
+            display: block;
+            margin-top: 5px;
+            font-size: 11px;
+            font-family: 'IBM Plex Mono', monospace;
+            color: var(--brass-dark);
+        }
         .status-tag {
             display: inline-block;
             font-size: 12px;
@@ -158,6 +165,8 @@
         .status-approved { background: #E3EEE8; color: var(--safe); }
         .status-flagged { background: #F6E9E9; color: var(--danger); }
         .status-reported { background: #E7E8EB; color: var(--ink); }
+        .status-pending { background: #FBF0DD; color: var(--brass-dark); }
+        .status-cancelled { background: #E7EAF2; color: var(--navy); }
 
         .table-scroll { overflow-x: auto; border-radius: 4px; }
 
@@ -198,6 +207,10 @@
             <div class="metric">
                 <div class="label">Total Transactions</div>
                 <div class="value">{{ total_txns }}</div>
+            </div>
+            <div class="metric">
+                <div class="label">Pending Review</div>
+                <div class="value brass">{{ pending_review }}</div>
             </div>
             <div class="metric">
                 <div class="label">Confirmed Fraud Reports</div>
@@ -258,6 +271,38 @@
         <section>
             <div class="section-head">
                 <div>
+                    <h2 class="section-title">Reported Fraud Cards</h2>
+                </div>
+            </div>
+            <div class="table-scroll">
+                <table class="ledger">
+                    <thead>
+                        <tr><th>Card</th><th>Reported</th><th>Since</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for item in fraud_reported_cards %}
+                        <tr>
+                            <td class="mono">{{ item[2] }}</td>
+                            <td>{{ item[3] }}</td>
+                            <td class="mono" style="color: var(--muted);">{{ item[4] }}</td>
+                            <td>
+                                <form action="{{ url_for('unflag_entity_by_value') }}" method="POST">
+                                    <input type="hidden" name="entity_value" value="{{ item[2] }}">
+                                    <button type="submit" class="btn-mini safe">Release</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr class="empty-row"><td colspan="4">No cards have been reported as fraud.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section>
+            <div class="section-head">
+                <div>
                     <h2 class="section-title">Transaction Triage</h2>
                     <p class="section-note">Most recent 50 transactions, sorted by risk relevance.</p>
                 </div>
@@ -286,32 +331,54 @@
                                 {% set g = (106 - 59 * risk_val / 100) | int %}
                                 {% set b = (78 - 31 * risk_val / 100) | int %}
                                 <span class="risk-tag" style="background-color: rgb({{ r }},{{ g }},{{ b }});">{{ txn[6] }}</span>
+                                {% set signals = [] %}
+                                {% if txn[8] is not none and txn[8] >= 3 %}{% set _ = signals.append(txn[8]|string ~ " transactions in the last hour") %}{% endif %}
+                                {% if txn[3] >= 1000 %}{% set _ = signals.append("Large amount") %}{% endif %}
+                                {% if txn[9] is not none and txn[9] > 1000 %}{% set _ = signals.append("Far from home") %}{% endif %}
+                                {% if signals %}
+                                <span class="signal-note">{{ signals|join(" · ") }}</span>
+                                {% endif %}
+                                {% if txn[3] >= 1000 %}
+                                    {% if txn[11] %}
+                                    <span class="signal-note" style="color: var(--safe);">&#10003; OTP verified</span>
+                                    {% else %}
+                                    <span class="signal-note" style="color: var(--danger);">&#9888; No OTP (API submission)</span>
+                                    {% endif %}
+                                {% endif %}
                             </td>
                             <td>
                                 {% if txn[7] == 'Flagged' %}
                                     <span class="status-tag status-flagged">{{ txn[7] }}</span>
+                                {% elif txn[7] == 'Pending' %}
+                                    <span class="status-tag status-pending">Pending Review</span>
                                 {% elif txn[7] == 'Fraud Reported' %}
                                     <span class="status-tag status-reported">{{ txn[7] }}</span>
+                                {% elif txn[7] == 'Cancelled' %}
+                                    <span class="status-tag status-cancelled">{{ txn[7] }}</span>
                                 {% else %}
                                     <span class="status-tag status-approved">{{ txn[7] }}</span>
                                 {% endif %}
                             </td>
                             <td>
                                 <div class="row-actions">
+                                    {% if txn[7] == 'Pending' %}
+                                    <form action="{{ url_for('approve_transaction', txn_id=txn[0]) }}" method="POST">
+                                        <button type="submit" class="btn-mini safe">Approve</button>
+                                    </form>
+                                    {% endif %}
+                                    {% if txn[7] in ('Pending', 'Approved') %}
+                                    <form action="{{ url_for('cancel_transaction', txn_id=txn[0]) }}" method="POST">
+                                        <button type="submit" class="btn-mini">Cancel</button>
+                                    </form>
+                                    {% endif %}
                                     {% if txn[1] in blacklisted_cards %}
                                     <form action="{{ url_for('unflag_entity_by_value') }}" method="POST">
                                         <input type="hidden" name="entity_value" value="{{ txn[1] }}">
                                         <button type="submit" class="btn-mini safe">Unflag</button>
                                     </form>
                                     {% else %}
-                                    <form action="{{ url_for('flag_entity_quick') }}" method="POST">
-                                        <input type="hidden" name="card_masked" value="{{ txn[1] }}">
-                                        <button type="submit" class="btn-mini danger">Flag</button>
-                                    </form>
-                                    {% endif %}
-                                    {% if txn[7] != 'Fraud Reported' %}
                                     <form action="{{ url_for('report_fraud', txn_id=txn[0]) }}" method="POST">
-                                        <button type="submit" class="btn-mini">Report</button>
+                                        <button type="submit" class="btn-mini danger">Report</button>
                                     </form>
                                     {% endif %}
                                 </div>

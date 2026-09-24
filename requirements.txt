@@ -4,3 +4,4 @@ joblib==1.5.3
 numpy==2.4.6
 scikit-learn==1.9.0
 gunicorn==23.0.0
+twilio
