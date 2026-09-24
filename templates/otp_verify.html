@@ -141,7 +141,11 @@
 
         {% if delivery == 'arkesel' %}
         <div class="demo-note">
+            {% if medium == 'voice' %}
+            A verification call is being placed to <strong>{{ phone_number }}</strong>. Answer that phone for the code.
+            {% else %}
             A verification code was sent via SMS to <strong>{{ phone_number }}</strong>. Check that phone for the code.
+            {% endif %}
         </div>
         {% else %}
         <div class="demo-note">

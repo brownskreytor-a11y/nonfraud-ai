@@ -73,15 +73,25 @@ OTP_TTL_SECONDS = 300
 OTP_RISK_REDUCTION_FACTOR = 0.5
 OTP_RISK_REDUCTION_MAX_AMOUNT = 499
 
-# Real SMS delivery via Arkesel's OTP API -- set ARKESEL_API_KEY in the
-# environment (never hardcode it) to send an actual code to the cardholder's
-# phone. ARKESEL_SENDER_ID is optional (defaults below) and controls the
-# sender name shown on the SMS. When the key is missing, or a send/verify
-# call fails (no credit, bad number, no network), the app transparently
-# falls back to generating its own code and showing it on screen -- the
-# review step is never skipped, only the delivery channel changes.
+# Real SMS/voice delivery via Arkesel's OTP API -- set ARKESEL_API_KEY in
+# the environment (never hardcode it) to send an actual code to the
+# cardholder's phone. ARKESEL_SENDER_ID is optional (defaults below) and
+# controls the sender name shown on the SMS -- SMS sender names require
+# operator-level registration (a business certificate + authorization
+# letter) in Ghana, which an individual/student account won't have.
+# ARKESEL_OTP_MEDIUM lets that be worked around: set it to "voice" (Ghana
+# only) to have Arkesel place a call reading the code aloud instead of
+# texting it -- a voice call isn't a branded sender name, so it isn't
+# gated by the same registration requirement. Defaults to "sms". When the
+# key is missing, or a send/verify call fails (no credit, bad number, no
+# network, unregistered sender), the app transparently falls back to
+# generating its own code and showing it on screen -- the review step is
+# never skipped, only the delivery channel changes.
 ARKESEL_API_KEY = os.environ.get("ARKESEL_API_KEY")
 ARKESEL_SENDER_ID = os.environ.get("ARKESEL_SENDER_ID", "NonFraud")
+ARKESEL_OTP_MEDIUM = os.environ.get("ARKESEL_OTP_MEDIUM", "sms").strip().lower()
+if ARKESEL_OTP_MEDIUM not in ("sms", "voice"):
+    ARKESEL_OTP_MEDIUM = "sms"
 ARKESEL_BASE_URL = "https://sms.arkesel.com/api/otp"
 
 arkesel_configured = bool(requests and ARKESEL_API_KEY)
@@ -112,7 +122,7 @@ def _arkesel_send_otp(phone_number):
             json={
                 "expiry": max(1, min(10, OTP_TTL_SECONDS // 60)),
                 "length": 6,
-                "medium": "sms",
+                "medium": ARKESEL_OTP_MEDIUM,
                 "message": "Your NonFraud-AI verification code is: %otp_code%",
                 "number": _normalize_phone_for_arkesel(phone_number),
                 "sender_id": ARKESEL_SENDER_ID,
@@ -422,6 +432,7 @@ def predict():
 
         session['pending_otp'] = {
             'delivery': otp_delivery,
+            'medium': ARKESEL_OTP_MEDIUM,
             'phone_number': phone_number,
             'code': otp_code,
             'attempts': 0,
@@ -442,7 +453,7 @@ def predict():
         }
         return render_template('otp_verify.html', amount=amount, card_masked=card_masked,
                                issuer_name=issuer_name, prediction_str=prediction_str, otp_code=otp_code,
-                               delivery=otp_delivery, phone_number=phone_number)
+                               delivery=otp_delivery, medium=ARKESEL_OTP_MEDIUM, phone_number=phone_number)
 
     cursor.execute('''
         INSERT INTO transactions (card_masked, card_hash, issuer_name, amount, device_time, velocity_count, home_distance_km, issuer_distance_km, device_ip, prediction, status, otp_verified)
@@ -487,7 +498,7 @@ def verify_otp():
         session['pending_otp'] = pending
         return render_template('otp_verify.html', amount=txn['amount'], card_masked=txn['card_masked'],
                                issuer_name=txn['issuer_name'], prediction_str=txn['prediction'], otp_code=pending['code'],
-                               delivery=pending['delivery'], phone_number=pending['phone_number'],
+                               delivery=pending['delivery'], medium=pending.get('medium', 'sms'), phone_number=pending['phone_number'],
                                error='Incorrect code.', attempts_left=OTP_MAX_ATTEMPTS - pending['attempts'])
 
     if txn['amount'] <= OTP_RISK_REDUCTION_MAX_AMOUNT:
