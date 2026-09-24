@@ -34,8 +34,11 @@ HOME_COUNTRY = "GH"
 # A transaction on a card issued outside the cardholder's home country is a
 # classic cross-border fraud signal on its own, independent of amount or
 # velocity -- so it gets a risk floor and always triggers the OTP step-up,
-# even for a small amount that would otherwise sail through untouched.
-DIFFERENT_COUNTRY_RISK_FLOOR = 0.40
+# even for a small amount that would otherwise sail through untouched. A
+# different-country card also always gets the OTP challenge itself (see the
+# tx_status decisions below), regardless of how high the score climbs, so
+# this floor alone can never cause a silent auto-cancel with no code sent.
+DIFFERENT_COUNTRY_RISK_FLOOR = 0.52
 
 
 def _issuer_country(issuer_name):
@@ -72,14 +75,20 @@ OTP_REVIEW_THRESHOLD = 300
 OTP_MAX_ATTEMPTS = 3
 OTP_TTL_SECONDS = 300
 
-# A score this high doesn't get the benefit of the doubt: it's auto-declined
-# as Cancelled instead of being routed to the admin queue or an OTP
-# challenge -- there's no point asking the cardholder for a one-time code on
-# a transaction that's going to be shut down regardless of whether they
-# enter it correctly. Blacklisted cards/IPs still take priority over this
-# and land as Flagged instead, since that's a stronger, already-confirmed
-# signal rather than just a high model/rule score.
-AUTO_CANCEL_RISK_THRESHOLD = 70
+# A score this high doesn't get the benefit of the doubt, but it also
+# doesn't get shut down without a chance to verify first: it forces the same
+# one-time-code challenge as a large amount or a different-country card,
+# rather than being silently auto-declined before the cardholder even gets
+# a chance to prove who they are. What happens once that challenge is
+# cleared differs by case (see verify_otp() and api_evaluate()): a
+# different-country card whose risk is still over this threshold after OTP
+# is cancelled outright, since cross-border plus an already-high score is
+# treated as decided rather than left for manual review; a same-country
+# transaction just lands as Pending regardless of score, same as everything
+# else, and only a human on the admin dashboard can cancel it from there. A
+# blacklisted card/IP is the only thing that bypasses the OTP challenge
+# entirely and lands as Flagged outright.
+AUTO_CANCEL_RISK_THRESHOLD = 75
 
 # Clearing the one-time-code challenge no longer discounts the stored risk
 # score -- a verified transaction still carries its real, pre-challenge risk
@@ -423,28 +432,31 @@ def predict():
     risk_percentage = math.floor(fraud_proba * 100)
     prediction_str = f"{risk_percentage}% Fraud Risk"
 
-    # Blacklisted entities auto-flag; a score over AUTO_CANCEL_RISK_THRESHOLD
-    # auto-cancels instead of reaching the admin queue at all; everything
-    # else waits for the admin to Approve or Flag it from the dashboard,
-    # guided by the risk_percentage/prediction_str computed above.
+    # Blacklisted entities auto-flag and skip everything else -- that's a
+    # deterministic, already-confirmed signal, not a score. Nothing else is
+    # decided pre-OTP anymore: a score over AUTO_CANCEL_RISK_THRESHOLD no
+    # longer skips straight to Cancelled before the cardholder gets a chance
+    # to verify -- it just adds to the reasons the OTP challenge below gets
+    # triggered. Everything that isn't blacklisted starts out 'Pending' here;
+    # verify_otp() below is what actually decides a different-country card's
+    # fate once the code is entered (see AUTO_CANCEL_RISK_THRESHOLD).
     if is_blacklisted:
         tx_status = 'Flagged'
-    elif risk_percentage > AUTO_CANCEL_RISK_THRESHOLD:
-        tx_status = 'Cancelled'
     else:
         tx_status = 'Pending'
 
-    # Large amounts don't get inserted straight away -- they have to clear a
-    # one-time-code challenge first. Nothing is written to the transactions
-    # table until verify_otp() confirms the code. This only applies to
-    # transactions still sitting at 'Pending' -- a blacklisted card auto-
-    # flags and an over-threshold score auto-cancels, both bypassing the
-    # challenge entirely, since there's nothing to gain from asking the
-    # cardholder for a code on a transaction that's already decided. A
-    # different-country card forces the same challenge regardless of
-    # amount -- cross-border use is a strong enough signal on its own to
-    # warrant step-up verification.
-    if tx_status == 'Pending' and (amount >= OTP_REVIEW_THRESHOLD or is_different_country):
+    # Large amounts, foreign-issued cards, and high risk scores don't get
+    # inserted straight away -- they have to clear a one-time-code challenge
+    # first. Nothing is written to the transactions table until verify_otp()
+    # confirms the code -- and for a different-country card, verify_otp()
+    # then checks risk_percentage again after the code is confirmed and can
+    # still cancel it outright, rather than assuming a cleared challenge
+    # means the transaction is fine (see AUTO_CANCEL_RISK_THRESHOLD). This
+    # check only applies to transactions still sitting at 'Pending' -- a
+    # blacklisted card auto-flags, bypassing the challenge entirely since
+    # there's nothing to gain from asking for a code on a transaction that's
+    # already decided.
+    if tx_status == 'Pending' and (amount >= OTP_REVIEW_THRESHOLD or is_different_country or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD):
         conn.close()
 
         # Try a real SMS via Arkesel first. Arkesel generates and holds the
@@ -485,6 +497,7 @@ def predict():
                 'device_ip': client_ip,
                 'prediction': prediction_str,
                 'risk_percentage': risk_percentage,
+                'is_different_country': is_different_country,
             }
         }
         return render_template('otp_verify.html', amount=amount, card_masked=card_masked,
@@ -537,6 +550,19 @@ def verify_otp():
                                delivery=pending['delivery'], medium=pending.get('medium', 'sms'), phone_number=pending['phone_number'],
                                error='Incorrect code.', attempts_left=OTP_MAX_ATTEMPTS - pending['attempts'])
 
+    # Passing the code proves the cardholder holds the verification channel
+    # on file for this card -- it doesn't by itself clear a different-
+    # country transaction whose risk is still over AUTO_CANCEL_RISK_THRESHOLD
+    # even with that identity check satisfied, so that combination is
+    # cancelled here rather than handed to the admin queue as if it were
+    # routine. A same-country transaction, or a different-country one at or
+    # under the threshold, still lands as Pending for the admin to decide,
+    # same as always.
+    if txn.get('is_different_country') and txn['risk_percentage'] > AUTO_CANCEL_RISK_THRESHOLD:
+        final_status = 'Cancelled'
+    else:
+        final_status = 'Pending'
+
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
@@ -544,11 +570,13 @@ def verify_otp():
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (txn['card_masked'], txn['card_hash'], txn['issuer_name'], txn['amount'], txn['device_time'],
           txn['velocity_count'], txn['home_distance_km'], txn['issuer_distance_km'], txn['device_ip'],
-          txn['prediction'], 'Pending', 1))
+          txn['prediction'], final_status, 1))
     conn.commit()
     conn.close()
 
     session.pop('pending_otp', None)
+    if final_status == 'Cancelled':
+        return redirect(url_for('transaction_intake', notice=f"Verified, but the transaction was cancelled -- risk score exceeded {AUTO_CANCEL_RISK_THRESHOLD}% on a foreign-issued card."))
     return redirect(url_for('transaction_intake', success='Verification successful.'))
 
 @app.route('/api/evaluate', methods=['POST'])
@@ -631,21 +659,23 @@ def api_evaluate():
     # This endpoint is a machine-to-machine API call, not a browser session,
     # so it can't run the interactive one-time-code challenge that /predict
     # uses for the same threshold (see verify_otp()). It still has to tell
-    # the caller the truth: a large amount or different-country card here
-    # has NOT cleared step-up verification, so otp_verified stays 0 and the
-    # caller is told to collect that verification on their end before
-    # treating this as final. A score over AUTO_CANCEL_RISK_THRESHOLD skips
-    # OTP entirely and auto-cancels instead -- no point asking for a code on
-    # a transaction that's already been declined.
+    # the caller the truth: a large amount, different-country card, or high
+    # risk score here has NOT cleared step-up verification, so otp_verified
+    # stays 0 and the caller is told to collect that verification on their
+    # end before treating this as final. A score over
+    # AUTO_CANCEL_RISK_THRESHOLD just becomes another reason OTP_REQUIRED is
+    # returned instead of an outright decline, same as /predict -- but
+    # unlike /predict's verify_otp(), this endpoint has no matching "confirm
+    # the code, then decide" step of its own, so it can't apply the
+    # post-verification auto-cancel that a different-country card gets
+    # there once its risk is still over threshold after the code is
+    # entered. A caller integrating against this API is responsible for
+    # that follow-up decision on its own end.
     if is_blacklisted:
         tx_status = 'Flagged'
         action_status = "BLOCK"
         otp_required = False
-    elif risk_percentage > AUTO_CANCEL_RISK_THRESHOLD:
-        tx_status = 'Cancelled'
-        action_status = "AUTO_CANCELLED"
-        otp_required = False
-    elif amount >= OTP_REVIEW_THRESHOLD or is_different_country:
+    elif is_different_country or amount >= OTP_REVIEW_THRESHOLD or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD:
         tx_status = 'Pending'
         action_status = "OTP_REQUIRED"
         otp_required = True
@@ -667,8 +697,6 @@ def api_evaluate():
 
     if is_blacklisted:
         status_text = "Blacklisted & Blocked"
-    elif tx_status == 'Cancelled':
-        status_text = f"Auto-cancelled -- risk score exceeded {AUTO_CANCEL_RISK_THRESHOLD}%"
     elif otp_required:
         status_text = "Step-up verification (OTP) required before this can be finalized"
     elif tx_status == 'Pending':
