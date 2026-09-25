@@ -68,12 +68,25 @@ def _issuer_country(issuer_name):
         return None
     return issuer_name.rsplit(',', 1)[-1].strip(') ').strip()
 
-# Every evaluated transaction now requires manual admin review before it is
+
+def _first_txn_auto_approves(velocity_count, is_different_country, amount):
+    """True when a transaction qualifies for the ordinary, no-red-flags
+    fast path: a same-country card's first attempt within the current
+    velocity window, at or under FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT. See
+    that constant for the full rule and its exceptions."""
+    return (velocity_count == 1
+            and not is_different_country
+            and amount <= FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT)
+
+# Most evaluated transactions still require manual admin review before being
 # considered final -- the model's risk score is computed and shown, but it
 # only informs the admin's Approve/Flag decision on the dashboard, it never
-# decides the outcome by itself. A blacklisted card/IP is the one exception:
-# that is a deterministic security rule, not a prediction, so it still
-# auto-flags instantly and skips the review queue.
+# decides the outcome by itself. Two things skip that queue automatically: a
+# blacklisted card/IP is a deterministic security rule, not a prediction, so
+# it auto-flags instantly; and the ordinary case a same-country card's first,
+# low-value attempt (see _first_txn_auto_approves() /
+# FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT) is auto-approved instead, since it
+# carries no red flags worth a human's time.
 
 # A hard ceiling, not a risk judgment -- nothing above this amount is ever
 # processed at all, regardless of the model's score, blacklist status, or
@@ -93,6 +106,23 @@ MAX_TRANSACTION_AMOUNT = 5000
 OTP_REVIEW_THRESHOLD = 300
 OTP_MAX_ATTEMPTS = 3
 OTP_TTL_SECONDS = 300
+
+# A card's first transaction within VELOCITY_WINDOW_SECONDS (velocity_count
+# == 1) on a same-country card, at or under this amount, is auto-approved
+# instead of landing in the admin's Pending queue -- the ordinary, no-red-
+# flags case doesn't need a human to sign off on it. This only changes the
+# *terminal* status of a transaction that would otherwise become 'Pending';
+# it doesn't skip anything else -- a card still has to clear the OTP
+# challenge first if OTP_REVIEW_THRESHOLD, a high score, or another rule
+# already requires it (auto-approval just replaces what it would have
+# landed as afterward). Above this amount, or on a different-country card,
+# or once velocity_count is 2+, none of this applies and the original rule
+# stands: it goes to Pending for the admin to decide. Blacklisted cards,
+# cards cancelled outright by a harder rule (foreign+high-risk or rapid-fire
+# after OTP), stay exactly as they were -- this can only ever turn a
+# would-be 'Pending' into 'Approved', never override a 'Flagged' or
+# 'Cancelled' verdict.
+FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT = 500
 
 # A score this high doesn't get the benefit of the doubt, but it also
 # doesn't get shut down without a chance to verify first: it forces the same
@@ -601,6 +631,14 @@ def predict():
                                issuer_name=issuer_name, prediction_str=prediction_str, otp_code=otp_code,
                                delivery=otp_delivery, medium=ARKESEL_OTP_MEDIUM, phone_number=phone_number)
 
+    # tx_status here is only ever 'Flagged' (blacklist) or 'Pending' with no
+    # OTP needed -- a rapid-firing or high-risk-foreign 'Cancelled' verdict
+    # is only ever reached after the OTP challenge, via verify_otp()'s own
+    # redirect below, never here. A 'Pending' one still gets the ordinary
+    # first-attempt fast path applied to it (see FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT).
+    if tx_status == 'Pending' and _first_txn_auto_approves(velocity_count, is_different_country, amount):
+        tx_status = 'Approved'
+
     cursor.execute('''
         INSERT INTO transactions (card_masked, card_hash, issuer_name, amount, device_time, velocity_count, home_distance_km, issuer_distance_km, device_ip, prediction, status, otp_verified)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -610,10 +648,6 @@ def predict():
     conn.commit()
     conn.close()
 
-    # tx_status here is only ever 'Flagged' (blacklist) or 'Pending' with no
-    # OTP needed -- a rapid-firing or high-risk-foreign 'Cancelled' verdict
-    # is only ever reached after the OTP challenge, via verify_otp()'s own
-    # redirect below, never here.
     return redirect(url_for('transaction_intake'))
 
 @app.route('/verify_otp', methods=['POST'])
@@ -666,7 +700,12 @@ def verify_otp():
     if txn.get('velocity_count', 0) >= RAPID_FIRE_CANCEL_THRESHOLD:
         cancel_reasons.append(f"{txn['velocity_count']} transactions on this card within {VELOCITY_WINDOW_SECONDS // 60} minutes exceeded the rapid-fire limit")
 
-    final_status = 'Cancelled' if cancel_reasons else 'Pending'
+    if cancel_reasons:
+        final_status = 'Cancelled'
+    elif _first_txn_auto_approves(txn['velocity_count'], txn.get('is_different_country', False), txn['amount']):
+        final_status = 'Approved'
+    else:
+        final_status = 'Pending'
 
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -806,6 +845,11 @@ def api_evaluate():
         tx_status = 'Pending'
         action_status = "OTP_REQUIRED"
         otp_required = True
+    elif _first_txn_auto_approves(velocity_count, is_different_country, amount):
+        # The ordinary, no-red-flags case -- see FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT.
+        tx_status = 'Approved'
+        action_status = "APPROVED"
+        otp_required = False
     else:
         tx_status = 'Pending'
         action_status = "REVIEW"
@@ -826,6 +870,8 @@ def api_evaluate():
         status_text = "Blacklisted & Blocked"
     elif otp_required:
         status_text = "Step-up verification (OTP) required before this can be finalized"
+    elif tx_status == 'Approved':
+        status_text = f"Auto-approved -- first transaction on this card, ${FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT:,.0f} or under"
     elif tx_status == 'Pending':
         status_text = "Pending manual review"
     else:
