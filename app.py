@@ -605,7 +605,20 @@ def predict():
     # blacklisted card auto-flags, bypassing the challenge entirely since
     # there's nothing to gain from asking for a code on a transaction that's
     # already decided.
-    if tx_status == 'Pending' and (amount >= OTP_REVIEW_THRESHOLD or is_different_country or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD or velocity_count >= RAPID_FIRE_VELOCITY_THRESHOLD):
+    # A first-attempt, same-country, at-or-under-$500 transaction (see
+    # FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT) skips the OTP challenge below
+    # entirely, even when the amount alone (>= OTP_REVIEW_THRESHOLD) would
+    # otherwise have triggered it -- it's excluded from the OTP condition up
+    # front rather than just picked up by the auto-approve check further
+    # down, so it never sees the code screen at all. Anything over $500
+    # still follows the original rule beneath it unchanged.
+    # velocity_count only exists when the card isn't blacklisted (see the
+    # is_blacklisted/else split above) -- short-circuit on is_blacklisted
+    # first so this never evaluates _first_txn_auto_approves(velocity_count,
+    # ...) with an undefined velocity_count for a blacklisted card.
+    first_txn_fast_path = (not is_blacklisted) and _first_txn_auto_approves(velocity_count, is_different_country, amount)
+
+    if tx_status == 'Pending' and not first_txn_fast_path and (amount >= OTP_REVIEW_THRESHOLD or is_different_country or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD or velocity_count >= RAPID_FIRE_VELOCITY_THRESHOLD):
         conn.close()
 
         # Try a real SMS via Arkesel first. Arkesel generates and holds the
@@ -658,7 +671,7 @@ def predict():
     # is only ever reached after the OTP challenge, via verify_otp()'s own
     # redirect below, never here. A 'Pending' one still gets the ordinary
     # first-attempt fast path applied to it (see FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT).
-    if tx_status == 'Pending' and _first_txn_auto_approves(velocity_count, is_different_country, amount):
+    if tx_status == 'Pending' and first_txn_fast_path:
         tx_status = 'Approved'
 
     cursor.execute('''
@@ -879,15 +892,19 @@ def api_evaluate():
         tx_status = 'Flagged'
         action_status = "BLOCK"
         otp_required = False
+    elif _first_txn_auto_approves(velocity_count, is_different_country, amount):
+        # The ordinary, no-red-flags case -- see FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT.
+        # Checked before the OTP-required condition below on purpose: this
+        # skips step-up verification entirely, even when the amount alone
+        # would otherwise have required it (amount >= OTP_REVIEW_THRESHOLD
+        # can still be true here, e.g. a first-attempt $400 transaction).
+        tx_status = 'Approved'
+        action_status = "APPROVED"
+        otp_required = False
     elif is_different_country or amount >= OTP_REVIEW_THRESHOLD or risk_percentage > AUTO_CANCEL_RISK_THRESHOLD or velocity_count >= RAPID_FIRE_VELOCITY_THRESHOLD:
         tx_status = 'Pending'
         action_status = "OTP_REQUIRED"
         otp_required = True
-    elif _first_txn_auto_approves(velocity_count, is_different_country, amount):
-        # The ordinary, no-red-flags case -- see FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT.
-        tx_status = 'Approved'
-        action_status = "APPROVED"
-        otp_required = False
     else:
         tx_status = 'Pending'
         action_status = "REVIEW"
