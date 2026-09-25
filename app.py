@@ -446,19 +446,26 @@ def predict():
     is_blacklisted = cursor.fetchone() is not None
 
     if is_blacklisted:
-        fraud_proba = 1.0  
+        fraud_proba = 1.0
     else:
-        cursor.execute('SELECT device_time FROM transactions WHERE card_hash = ?', (card_hash,))
+        cursor.execute('SELECT device_time, prediction FROM transactions WHERE card_hash = ?', (card_hash,))
         past_txns = cursor.fetchall()
-        velocity_count = 1  
+        velocity_count = 1
         dt_naive = dt.replace(tzinfo=None) if dt.tzinfo else dt
+        max_prior_risk_in_window = None
 
-        for past in past_txns:
+        for p_time, p_prediction in past_txns:
             try:
-                p_time_str = past[0].strip().split('.')[0]
+                p_time_str = p_time.strip().split('.')[0]
                 p_dt = datetime.strptime(p_time_str, "%Y-%m-%d %H:%M:%S")
                 if 0 <= (dt_naive - p_dt).total_seconds() <= VELOCITY_WINDOW_SECONDS:
                     velocity_count += 1
+                    try:
+                        p_risk = int(p_prediction.split('%')[0])
+                        if max_prior_risk_in_window is None or p_risk > max_prior_risk_in_window:
+                            max_prior_risk_in_window = p_risk
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -468,7 +475,7 @@ def predict():
 
         scaled_amount = np.log1p(amount)
         features = np.array([[scaled_amount, transaction_hour, velocity_count, home_distance_km, issuer_distance_km]])
-        
+
         try:
             fraud_proba = model.predict_proba(features)[0][1]
         except Exception:
@@ -492,6 +499,20 @@ def predict():
 
         if home_distance_km > 1000 and amount > 500:
             fraud_proba = max(fraud_proba, 0.78)
+
+        # The model is a Random Forest, not a smooth function -- fed nearly
+        # identical inputs a few minutes apart (only velocity_count and the
+        # hour actually differ between two rapid-fire attempts), it can
+        # legitimately return a *lower* raw score for the later, more
+        # suspicious attempt. Displaying that would read as "the 5th rapid
+        # transaction is less risky than the 4th," which undermines the
+        # whole point of the rapid-fire signal. So the score is floored
+        # against the highest score any other transaction on this same card
+        # already reached within the current VELOCITY_WINDOW_SECONDS streak
+        # -- it can still climb further, but within one streak it can never
+        # visibly drop, no matter what the raw model says this time.
+        if max_prior_risk_in_window is not None:
+            fraud_proba = max(fraud_proba, max_prior_risk_in_window / 100.0)
 
     risk_percentage = math.floor(fraud_proba * 100)
     prediction_str = f"{risk_percentage}% Fraud Risk"
@@ -706,16 +727,23 @@ def api_evaluate():
     if is_blacklisted:
         fraud_proba = 1.0
     else:
-        cursor.execute('SELECT device_time FROM transactions WHERE card_hash = ?', (card_hash,))
+        cursor.execute('SELECT device_time, prediction FROM transactions WHERE card_hash = ?', (card_hash,))
         past_txns = cursor.fetchall()
-        velocity_count = 1  
+        velocity_count = 1
+        max_prior_risk_in_window = None
 
-        for past in past_txns:
+        for p_time, p_prediction in past_txns:
             try:
-                p_time_str = past[0].strip().split('.')[0]
+                p_time_str = p_time.strip().split('.')[0]
                 p_dt = datetime.strptime(p_time_str, "%Y-%m-%d %H:%M:%S")
                 if 0 <= (dt - p_dt).total_seconds() <= VELOCITY_WINDOW_SECONDS:
                     velocity_count += 1
+                    try:
+                        p_risk = int(p_prediction.split('%')[0])
+                        if max_prior_risk_in_window is None or p_risk > max_prior_risk_in_window:
+                            max_prior_risk_in_window = p_risk
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -725,7 +753,7 @@ def api_evaluate():
 
         scaled_amount = np.log1p(amount)
         features = np.array([[scaled_amount, transaction_hour, velocity_count, home_distance_km, issuer_distance_km]])
-        
+
         try:
             fraud_proba = model.predict_proba(features)[0][1]
         except Exception:
@@ -740,6 +768,13 @@ def api_evaluate():
 
         if home_distance_km > 1000 and amount > 500:
             fraud_proba = max(fraud_proba, 0.78)
+
+        # See the matching comment in /predict -- never let the score drop
+        # below the highest score already reached by this same card within
+        # the current VELOCITY_WINDOW_SECONDS streak, so the risk shown
+        # never looks like it's going down as the attempt count goes up.
+        if max_prior_risk_in_window is not None:
+            fraud_proba = max(fraud_proba, max_prior_risk_in_window / 100.0)
 
     risk_percentage = math.floor(fraud_proba * 100)
     prediction_str = f"{risk_percentage}% Fraud Risk"
