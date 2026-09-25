@@ -176,6 +176,22 @@ RAPID_FIRE_VELOCITY_THRESHOLD = 2
 # so this constant only changes behavior in /predict's verify_otp().
 RAPID_FIRE_CANCEL_THRESHOLD = 5
 
+# The monotonic floor above only guarantees the score never *drops* -- it
+# doesn't guarantee it visibly *rises*. Because the underlying model is a
+# Random Forest fed nearly identical inputs a few minutes apart, the raw
+# score for attempt RAPID_FIRE_CANCEL_THRESHOLD can come back barely above
+# (or even equal to) the floor carried over from attempt
+# RAPID_FIRE_CANCEL_THRESHOLD - 1, e.g. 59% -> 59%. That reads as "nothing
+# changed," which undermines the point of the transaction that actually
+# crosses into auto-cancel territory -- it should look visibly worse than
+# the one right before it, not identical. So the transaction that first
+# reaches RAPID_FIRE_CANCEL_THRESHOLD has its score hard-floored to the
+# highest prior score in the window *plus* this fixed percentage-point gap
+# (capped at 100%), regardless of what the model or the other floors above
+# produced. Every attempt after that keeps climbing normally against this
+# new, higher floor via the ordinary monotonic-floor logic above.
+MIN_RISK_JUMP_AT_CANCEL_THRESHOLD = 15
+
 # Clearing the one-time-code challenge no longer discounts the stored risk
 # score -- a verified transaction still carries its real, pre-challenge risk
 # percentage into admin review. Passing OTP only proves the cardholder holds
@@ -544,6 +560,12 @@ def predict():
         if max_prior_risk_in_window is not None:
             fraud_proba = max(fraud_proba, max_prior_risk_in_window / 100.0)
 
+        # See MIN_RISK_JUMP_AT_CANCEL_THRESHOLD -- the transaction that first
+        # reaches the rapid-fire cancel threshold must look visibly worse
+        # than the one right before it, not just tied with it.
+        if velocity_count == RAPID_FIRE_CANCEL_THRESHOLD and max_prior_risk_in_window is not None:
+            fraud_proba = max(fraud_proba, min(1.0, max_prior_risk_in_window / 100.0 + MIN_RISK_JUMP_AT_CANCEL_THRESHOLD / 100.0))
+
     risk_percentage = math.floor(fraud_proba * 100)
     prediction_str = f"{risk_percentage}% Fraud Risk"
 
@@ -814,6 +836,12 @@ def api_evaluate():
         # never looks like it's going down as the attempt count goes up.
         if max_prior_risk_in_window is not None:
             fraud_proba = max(fraud_proba, max_prior_risk_in_window / 100.0)
+
+        # See MIN_RISK_JUMP_AT_CANCEL_THRESHOLD / the matching comment in
+        # /predict -- the transaction that first reaches the rapid-fire
+        # cancel threshold must look visibly worse than the one before it.
+        if velocity_count == RAPID_FIRE_CANCEL_THRESHOLD and max_prior_risk_in_window is not None:
+            fraud_proba = max(fraud_proba, min(1.0, max_prior_risk_in_window / 100.0 + MIN_RISK_JUMP_AT_CANCEL_THRESHOLD / 100.0))
 
     risk_percentage = math.floor(fraud_proba * 100)
     prediction_str = f"{risk_percentage}% Fraud Risk"
