@@ -716,9 +716,19 @@ def verify_otp():
     # rapid-firing), in which case both reasons are reported. Anything under
     # both of these still lands as Pending for the admin to decide, same as
     # always.
+    #
+    # The risk-score check used to only fire for foreign-issued cards. A
+    # local card could sit at 90%+ risk (e.g. the far-from-home + large
+    # amount floor) and still just land as Pending, since nothing but
+    # rapid-fire could cancel it. It now applies to every card, foreign or
+    # local, at the same AUTO_CANCEL_RISK_THRESHOLD -- only the wording of
+    # the reason changes based on whether the card was foreign-issued.
     cancel_reasons = []
-    if txn.get('is_different_country') and txn['risk_percentage'] > AUTO_CANCEL_RISK_THRESHOLD:
-        cancel_reasons.append(f"risk score exceeded {AUTO_CANCEL_RISK_THRESHOLD}% on a foreign-issued card")
+    if txn['risk_percentage'] > AUTO_CANCEL_RISK_THRESHOLD:
+        if txn.get('is_different_country'):
+            cancel_reasons.append(f"risk score exceeded {AUTO_CANCEL_RISK_THRESHOLD}% on a foreign-issued card")
+        else:
+            cancel_reasons.append(f"risk score exceeded {AUTO_CANCEL_RISK_THRESHOLD}% on a local transaction")
     if txn.get('velocity_count', 0) >= RAPID_FIRE_CANCEL_THRESHOLD:
         cancel_reasons.append(f"{txn['velocity_count']} transactions on this card within {VELOCITY_WINDOW_SECONDS // 60} minutes exceeded the rapid-fire limit")
 
