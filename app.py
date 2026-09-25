@@ -122,7 +122,7 @@ OTP_TTL_SECONDS = 300
 # after OTP), stay exactly as they were -- this can only ever turn a
 # would-be 'Pending' into 'Approved', never override a 'Flagged' or
 # 'Cancelled' verdict.
-FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT = 500
+FIRST_TXN_AUTO_APPROVE_MAX_AMOUNT = 499
 
 # A score this high doesn't get the benefit of the doubt, but it also
 # doesn't get shut down without a chance to verify first: it forces the same
